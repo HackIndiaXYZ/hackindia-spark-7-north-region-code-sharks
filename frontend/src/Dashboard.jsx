@@ -823,7 +823,7 @@ export default function Dashboard({ user }) {
                   <div className="flex justify-between items-center p-4 border-b border-slate-800 bg-slate-950">
                     <h3 className="font-semibold text-white flex items-center gap-2">
                       <QrCode className="w-5 h-5 text-medical-blue" />
-                      Genomic Passport
+                      Mobile Passport
                     </h3>
                     <button onClick={() => setShowPassport(false)} className="text-slate-400 hover:text-white transition-colors">
                       <X className="w-5 h-5" />
@@ -831,23 +831,17 @@ export default function Dashboard({ user }) {
                   </div>
                   <div className="p-8 flex flex-col items-center">
                     <div className="bg-white p-4 rounded-sm mb-6">
-                      {passportPayload ? (
-                        <QRCodeCanvas 
-                          value={`http://127.0.0.1:5173/passport-view?data=${passportPayload}`}
-                          size={200}
-                          level="H"
-                          fgColor="#0f172a"
-                        />
-                      ) : (
-                        <div className="w-[200px] h-[200px] flex items-center justify-center bg-slate-100 text-slate-400">
-                          <Activity className="w-8 h-8 animate-pulse" />
-                        </div>
-                      )}
+                      <QRCodeCanvas 
+                        value={`http://10.113.23.97:8000/passport/download/${user?.id}`}
+                        size={200}
+                        level="H"
+                        fgColor="#0f172a"
+                      />
                     </div>
                     <div className="w-full text-center mb-6">
                       <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1">Encrypted Metabolic Fingerprint</p>
                       <p className="text-sm text-slate-300 leading-relaxed">
-                        Healthcare providers can scan this to instantly check drug compatibility.
+                        Scan with your phone to instantly download your Genomic Blueprint PDF.
                       </p>
                     </div>
                     <button className="w-full py-3 bg-medical-blue hover:bg-blue-600 text-white font-medium rounded-sm transition-all flex items-center justify-center gap-2">

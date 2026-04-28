@@ -34,7 +34,7 @@ import uuid
 import shutil
 from typing import Optional, List
 from fastapi import FastAPI, UploadFile, File, Form, Request, Depends, HTTPException, Response
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -553,7 +553,7 @@ async def get_patient_summary(
         return {"summary": master_summary, "enzyme_profile": enzyme_profile}
     except Exception as e:
         logger.error(f"Failed to generate patient summary: {e}")
-        return {"summary": {"technical_narrative": "Error generating summary.", "layperson_summary": "Error generating summary. Please try again later."}, "enzyme_profile": {}}
+        return {"summary": {"doctor_narrative": "Error generating summary.", "patient_narrative": "Error generating summary. Please try again later."}, "enzyme_profile": {}}
 
 @app.get("/patient/history")
 async def get_patient_history(
@@ -593,11 +593,11 @@ async def get_patient_passport(
     
     # Get Summary (if VCF exists)
     summary_data = {
-        "technical_narrative": "No genomic data available.",
-        "layperson_summary": "Please upload a VCF file to generate a summary."
+        "doctor_narrative": "No genomic data available.",
+        "patient_narrative": "Please upload a VCF file to generate a summary."
     }
-    enzyme_profile = {}
     
+    enzyme_profile = {}
     latest_vcf = db.query(VCFFile).filter(VCFFile.user_id == user_id).order_by(VCFFile.upload_date.desc()).first()
     if latest_vcf and os.path.exists(latest_vcf.file_path):
         try:
@@ -606,8 +606,8 @@ async def get_patient_passport(
         except Exception as e:
             logger.error(f"Passport summary error: {e}")
             summary_data = {
-                "technical_narrative": "Error generating summary.",
-                "layperson_summary": "Error generating summary."
+                "doctor_narrative": "Error generating summary.",
+                "patient_narrative": "Error generating summary."
             }
             
     passport_payload = {
@@ -650,6 +650,59 @@ async def generate_report(req: ReportRequest):
     except Exception as e:
         logger.error(f"Failed to generate clinical PDF report: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to generate report")
+
+@app.get("/passport/download/{user_id}")
+async def download_passport_pdf(
+    user_id: int,
+    db: Session = Depends(get_db)
+):
+    if not PDF_SUPPORT:
+        raise HTTPException(status_code=501, detail="PDF generation is currently unavailable due to missing dependencies.")
+        
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Patient not found")
+        
+    # Get latest VCF and run Agent 1 -> Agent 3 pipeline
+    enzyme_profile = {}
+    summary_data = {
+        "doctor_narrative": "No genomic data available.",
+        "patient_narrative": "Please upload a VCF file to generate a summary."
+    }
+    
+    latest_vcf = db.query(VCFFile).filter(VCFFile.user_id == user_id).order_by(VCFFile.upload_date.desc()).first()
+    if latest_vcf and os.path.exists(latest_vcf.file_path):
+        try:
+            enzyme_profile = await extract_enzyme_profile(latest_vcf.file_path)
+            summary_data = await generate_patient_summary(enzyme_profile)
+        except Exception as e:
+            logger.error(f"Passport PDF summary error: {e}")
+            summary_data = {
+                "doctor_narrative": "Error generating summary.",
+                "patient_narrative": "Error generating summary."
+            }
+            
+    user_info = {
+        "user_id": str(user.id),
+        "name": user.name,
+        "email": user.email,
+        "summary": summary_data
+    }
+    
+    try:
+        pdf_bytes = generate_clinical_pdf(
+            user_info=user_info,
+            enzyme_profile=enzyme_profile,
+            drug_results=[]  # Assuming we only want the blueprint and profile, no drug results for now, or fetch history? The prompt says "DNA Translation Blueprint".
+        )
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": "attachment; filename=Genomic_Passport.pdf"}
+        )
+    except Exception as e:
+        logger.error(f"Failed to generate passport PDF: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to generate passport PDF")
 
 # ==============================
 # ENTRY POINT

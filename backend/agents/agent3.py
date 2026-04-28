@@ -256,17 +256,17 @@ async def generate_patient_summary(enzyme_profile: Dict[str, str], multi_drug_re
     If multi_drug_results is provided, incorporates those specific drug checks into the combined clinical summary.
     """
     default_summary = {
-        "technical_narrative": "Unable to generate summary.",
-        "layperson_summary": "We couldn't generate a summary at this time; please consult your doctor."
+        "doctor_narrative": "Unable to generate summary.",
+        "patient_narrative": "We couldn't generate a summary at this time; please consult your doctor."
     }
     
     if not GENAI_AVAILABLE:
-        default_summary["technical_narrative"] = "AI summary unavailable due to missing dependencies (google.genai). Please consult a clinical geneticist."
+        default_summary["doctor_narrative"] = "AI summary unavailable due to missing dependencies (google.genai). Please consult a clinical geneticist."
         return default_summary
         
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        default_summary["technical_narrative"] = "AI summary unavailable due to missing API key. Please consult a clinical geneticist."
+        default_summary["doctor_narrative"] = "AI summary unavailable due to missing API key. Please consult a clinical geneticist."
         return default_summary
         
     client = genai.Client(api_key=api_key)
@@ -279,7 +279,7 @@ async def generate_patient_summary(enzyme_profile: Dict[str, str], multi_drug_re
     has_insufficient_data = any(v == "Insufficient Data" for v in enzyme_profile.values())
     insufficient_data_instruction = ""
     if has_insufficient_data:
-        insufficient_data_instruction = "If the data has 'Insufficient Data' for a gene, the Layperson Summary must include: 'We couldn't find information about this specific gene in your file; please consult your doctor.'"
+        insufficient_data_instruction = "If the data has 'Insufficient Data' for a gene, the Patient Narrative must include: 'We couldn't find information about this specific gene in your file; please consult your doctor.'"
 
     prompt = f"""
     You are a Clinical Pharmacogenomics expert and a Bioinformatics Communicator.
@@ -288,13 +288,13 @@ async def generate_patient_summary(enzyme_profile: Dict[str, str], multi_drug_re
     Generate a "Master AI Summary" of the patient's genetic strengths and vulnerabilities.
     You must return exactly two distinct sections in JSON format:
     
-    1. "technical_narrative": Uses medical nomenclature (e.g., "Patient is homozygous for CYP2D6*4, indicating a total loss of enzyme function. Diplotype results suggest a Poor Metabolizer phenotype.").
-    2. "layperson_summary": Uses simplified analogies (e.g., "Your body processes certain pain medications and antidepressants much slower than average. This means standard doses might stay in your system too long, increasing the risk of side effects. Think of it as a 'slow filter' in your liver.").
+    1. "doctor_narrative": Uses medical nomenclature (e.g., "Patient is homozygous for CYP2D6*4, indicating a total loss of enzyme function. Diplotype results suggest a Poor Metabolizer phenotype.").
+    2. "patient_narrative": Uses simplified analogies (e.g., "Your body processes certain pain medications and antidepressants much slower than average. This means standard doses might stay in your system too long, increasing the risk of side effects. Think of it as a 'slow filter' in your liver.").
     
     CRITICAL: Do not use arbitrary medical filler; use the actual genomic markers detected in the VCF (e.g., rs3892097).
     {insufficient_data_instruction}
     
-    Return ONLY a valid JSON object with these keys: "technical_narrative", "layperson_summary".
+    Return ONLY a valid JSON object with these keys: "doctor_narrative", "patient_narrative".
     """
     
     try:
@@ -311,13 +311,13 @@ async def generate_patient_summary(enzyme_profile: Dict[str, str], multi_drug_re
         if text:
             data = json.loads(text)
             return {
-                "technical_narrative": data.get("technical_narrative", default_summary["technical_narrative"]),
-                "layperson_summary": data.get("layperson_summary", default_summary["layperson_summary"])
+                "doctor_narrative": data.get("doctor_narrative", default_summary["doctor_narrative"]),
+                "patient_narrative": data.get("patient_narrative", default_summary["patient_narrative"])
             }
         return default_summary
     except Exception as e:
         logger.error(f"Failed to generate patient summary: {e}")
         return {
-            "technical_narrative": "Error generating clinical summary. Standard precautions apply.",
-            "layperson_summary": "There was an error analyzing your genetic profile. Please consult your doctor."
+            "doctor_narrative": "Error generating clinical summary. Standard precautions apply.",
+            "patient_narrative": "There was an error analyzing your genetic profile. Please consult your doctor."
         }

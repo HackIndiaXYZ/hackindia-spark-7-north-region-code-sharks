@@ -4,7 +4,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
 from reportlab.graphics.shapes import Drawing, Rect
 
 def generate_clinical_pdf(user_info: dict, enzyme_profile: dict, drug_results: list) -> bytes:
@@ -92,7 +92,7 @@ def generate_clinical_pdf(user_info: dict, enzyme_profile: dict, drug_results: l
     Elements.append(Spacer(1, 0.2 * inch))
     
     # --- 3. GENOMIC METABOLIC PROFILE ---
-    Elements.append(Paragraph("Genomic Metabolic Profile", heading_style))
+    Elements.append(Paragraph("Genomic Summary Table", heading_style))
     
     profile_data = [["Gene", "Phenotype"]]
     for gene, phenotype in enzyme_profile.items():
@@ -117,15 +117,18 @@ def generate_clinical_pdf(user_info: dict, enzyme_profile: dict, drug_results: l
     if user_info.get("summary"):
         summary_data = user_info.get("summary")
         if isinstance(summary_data, dict):
-            Elements.append(Paragraph("Patient-Friendly Genomic Overview", heading_style))
-            layperson = summary_data.get("layperson_summary", "Not available.")
-            Elements.append(Paragraph(layperson, normal_style))
+            Elements.append(Paragraph("Clinical Insights", heading_style))
+            technical = summary_data.get("doctor_narrative", "Not available.")
+            Elements.append(Paragraph(technical, normal_style))
             Elements.append(Spacer(1, 0.15 * inch))
             
-            Elements.append(Paragraph("Professional Clinical Interpretation", heading_style))
-            technical = summary_data.get("technical_narrative", "Not available.")
-            Elements.append(Paragraph(technical, normal_style))
+            Elements.append(Paragraph("Patient Understanding", heading_style))
+            layperson = summary_data.get("patient_narrative", "Not available.")
+            Elements.append(Paragraph(layperson, normal_style))
             Elements.append(Spacer(1, 0.2 * inch))
+    
+    # Page Break for Medication Guardrail Analysis
+    Elements.append(PageBreak())
     
     # --- 4. MEDICATION GUARDRAIL ANALYSIS ---
     Elements.append(Paragraph("Medication Guardrail Analysis", heading_style))
