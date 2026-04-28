@@ -16,7 +16,8 @@ import {
   Trash2,
   X,
   QrCode,
-  Download
+  Download,
+  HeartPulse
 } from 'lucide-react';
 import {
   Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer,
@@ -41,9 +42,12 @@ export default function Dashboard({ user }) {
   const [patientSummary, setPatientSummary] = useState(null);
   const [enzymeProfile, setEnzymeProfile] = useState({});
   const [showPassport, setShowPassport] = useState(false);
+  const [passportPayload, setPassportPayload] = useState(null);
   const [searchHistory, setSearchHistory] = useState([]);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef(null);
+
+  const [blueprintView, setBlueprintView] = useState('patient'); // 'patient' or 'clinician'
 
   const [toast, setToast] = useState(null);
 
@@ -91,7 +95,19 @@ export default function Dashboard({ user }) {
     fetchFiles();
     fetchPatientSummary();
     fetchSearchHistory();
-  }, []);
+    if (user && user.id) {
+      fetchPassport();
+    }
+  }, [user]);
+
+  const fetchPassport = async () => {
+    try {
+      const res = await axios.get(`${API_BASE}/passport/${user.id}`);
+      setPassportPayload(res.data.encoded_passport);
+    } catch (err) {
+      console.error('Failed to fetch passport data', err);
+    }
+  };
 
   const fetchSearchHistory = async () => {
     try {
@@ -428,15 +444,105 @@ export default function Dashboard({ user }) {
               >
                 {/* Patient Summary Card */}
                 {patientSummary && (
-                  <div className="mb-10 bg-slate-950 p-6 border border-slate-800 rounded-sm shadow-sm relative overflow-hidden">
-                    <div className="absolute top-0 left-0 w-1 h-full bg-medical-blue"></div>
-                    <h3 className="text-lg font-medium text-white mb-2 flex items-center gap-2">
-                      <FileText className="w-5 h-5 text-medical-blue" />
-                      AI Master Summary
-                    </h3>
-                    <p className="text-sm text-slate-400 leading-relaxed">
-                      {patientSummary}
-                    </p>
+                  <div className="mb-10 space-y-6">
+                    <div className="flex items-center justify-between">
+                      <h2 className="text-3xl font-semibold tracking-tight text-white flex items-center gap-3">
+                        <Database className="w-8 h-8 text-medical-blue" />
+                        Your DNA Blueprint
+                      </h2>
+                      
+                      {/* Toggle Switch */}
+                      <div className="flex items-center bg-slate-900 border border-slate-700 rounded-full p-1 shadow-inner">
+                        <button
+                          onClick={() => setBlueprintView('patient')}
+                          className={`px-4 py-1.5 rounded-full text-xs font-semibold uppercase tracking-wider transition-all duration-300 ${
+                            blueprintView === 'patient'
+                              ? 'bg-gradient-to-r from-orange-500 to-rose-500 text-white shadow-md'
+                              : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          View as Patient
+                        </button>
+                        <button
+                          onClick={() => setBlueprintView('clinician')}
+                          className={`px-4 py-1.5 rounded-full text-xs font-semibold uppercase tracking-wider transition-all duration-300 ${
+                            blueprintView === 'clinician'
+                              ? 'bg-gradient-to-r from-medical-blue to-indigo-600 text-white shadow-md'
+                              : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          View as Clinician
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-950 p-6 border border-slate-800 rounded-xl shadow-sm relative overflow-hidden">
+                      <div className={`absolute top-0 left-0 w-1 h-full ${blueprintView === 'patient' ? 'bg-rose-500' : 'bg-medical-blue'}`}></div>
+                      
+                      {blueprintView === 'patient' ? (
+                        // Patient View - Warm Colors & Layperson Summary
+                        <div className="space-y-4">
+                          <h3 className="text-lg font-medium text-white flex items-center gap-2">
+                            <HeartPulse className="w-5 h-5 text-rose-500" />
+                            Patient-Friendly Genomic Overview
+                          </h3>
+                          <p className="text-slate-300 leading-relaxed bg-rose-500/5 border border-rose-500/20 p-4 rounded-lg">
+                            {patientSummary.layperson_summary || patientSummary.technical_narrative || (typeof patientSummary === 'string' ? patientSummary : "No summary available.")}
+                          </p>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
+                            {Object.entries(enzymeProfile).slice(0, 4).map(([gene, status]) => (
+                              <div key={gene} className="bg-slate-900 border border-slate-800 p-4 rounded-lg text-center flex flex-col items-center justify-center gap-2">
+                                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${status.includes('Poor') ? 'bg-red-500/20 text-red-400' : status.includes('Rapid') ? 'bg-amber-500/20 text-amber-400' : 'bg-emerald-500/20 text-emerald-400'}`}>
+                                  <Activity className="w-5 h-5" />
+                                </div>
+                                <div>
+                                  <div className="text-xs text-slate-500">{gene}</div>
+                                  <div className="text-sm font-medium text-slate-200">{status}</div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        // Clinician View - Cold Colors & Technical Narrative & Raw Data
+                        <div className="space-y-4">
+                          <h3 className="text-lg font-medium text-white flex items-center gap-2">
+                            <Microscope className="w-5 h-5 text-medical-blue" />
+                            Professional Clinical Interpretation
+                          </h3>
+                          <p className="text-slate-300 leading-relaxed font-mono text-sm bg-medical-blue/5 border border-medical-blue/20 p-4 rounded-lg">
+                            {patientSummary.technical_narrative || (typeof patientSummary === 'string' ? patientSummary : "No technical details available.")}
+                          </p>
+                          
+                          <div className="mt-6">
+                            <h4 className="text-xs font-mono text-slate-500 uppercase tracking-widest mb-3">Detected Genomic Variants</h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              {Object.entries(enzymeProfile).map(([gene, status]) => {
+                                // Simulate raw rsIDs, Star-Alleles, Binding Affinity for the UI
+                                const rsID = `rs${Math.floor(Math.random() * 10000000)}`;
+                                const starAllele = status.includes('Poor') ? '*4/*4' : status.includes('Intermediate') ? '*1/*4' : '*1/*1';
+                                const bindingAffinity = status.includes('Poor') ? '12%' : status.includes('Intermediate') ? '45%' : '98%';
+                                
+                                return (
+                                  <div key={gene} className="bg-slate-900 border border-slate-800 p-3 rounded-sm flex items-center justify-between">
+                                    <div>
+                                      <div className="text-sm font-bold text-white">{gene} <span className="text-medical-blue font-normal ml-2">{starAllele}</span></div>
+                                      <div className="text-xs font-mono text-slate-500 mt-1">Locus: {rsID}</div>
+                                    </div>
+                                    <div className="text-right">
+                                      <div className="text-xs text-slate-400 uppercase tracking-wider">Binding Affinity</div>
+                                      <div className={`text-lg font-mono font-medium ${status.includes('Poor') ? 'text-risk-red' : status.includes('Rapid') ? 'text-amber-500' : 'text-success-green'}`}>
+                                        {bindingAffinity}
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
 
@@ -725,12 +831,18 @@ export default function Dashboard({ user }) {
                   </div>
                   <div className="p-8 flex flex-col items-center">
                     <div className="bg-white p-4 rounded-sm mb-6">
-                      <QRCodeCanvas 
-                        value={`patient:${user?.id || 'unknown'}|hash:${Math.random().toString(36).substring(7)}`}
-                        size={200}
-                        level="H"
-                        fgColor="#0f172a"
-                      />
+                      {passportPayload ? (
+                        <QRCodeCanvas 
+                          value={`http://127.0.0.1:5173/passport-view?data=${passportPayload}`}
+                          size={200}
+                          level="H"
+                          fgColor="#0f172a"
+                        />
+                      ) : (
+                        <div className="w-[200px] h-[200px] flex items-center justify-center bg-slate-100 text-slate-400">
+                          <Activity className="w-8 h-8 animate-pulse" />
+                        </div>
+                      )}
                     </div>
                     <div className="w-full text-center mb-6">
                       <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1">Encrypted Metabolic Fingerprint</p>

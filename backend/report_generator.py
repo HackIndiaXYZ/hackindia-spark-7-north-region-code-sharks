@@ -112,6 +112,20 @@ def generate_clinical_pdf(user_info: dict, enzyme_profile: dict, drug_results: l
         Elements.append(Paragraph("No genomic profile data available.", normal_style))
         
     Elements.append(Spacer(1, 0.2 * inch))
+
+    # --- 3.5 DNA BLUEPRINT (AI NARRATIVES) ---
+    if user_info.get("summary"):
+        summary_data = user_info.get("summary")
+        if isinstance(summary_data, dict):
+            Elements.append(Paragraph("Patient-Friendly Genomic Overview", heading_style))
+            layperson = summary_data.get("layperson_summary", "Not available.")
+            Elements.append(Paragraph(layperson, normal_style))
+            Elements.append(Spacer(1, 0.15 * inch))
+            
+            Elements.append(Paragraph("Professional Clinical Interpretation", heading_style))
+            technical = summary_data.get("technical_narrative", "Not available.")
+            Elements.append(Paragraph(technical, normal_style))
+            Elements.append(Spacer(1, 0.2 * inch))
     
     # --- 4. MEDICATION GUARDRAIL ANALYSIS ---
     Elements.append(Paragraph("Medication Guardrail Analysis", heading_style))

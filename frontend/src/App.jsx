@@ -6,6 +6,7 @@ import { AnimatePresence } from 'framer-motion';
 // Views
 import LandingPage from './LandingPage';
 import Dashboard from './Dashboard';
+import PassportView from './PassportView';
 import { Activity } from 'lucide-react';
 
 // Configure axios defaults
@@ -19,6 +20,7 @@ function App() {
         <Routes>
           <Route path="/" element={<LandingPage />} />
           <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+          <Route path="/passport-view" element={<PassportView />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </div>

@@ -553,7 +553,7 @@ async def get_patient_summary(
         return {"summary": master_summary, "enzyme_profile": enzyme_profile}
     except Exception as e:
         logger.error(f"Failed to generate patient summary: {e}")
-        return {"summary": "Error generating summary. Please try again later."}
+        return {"summary": {"technical_narrative": "Error generating summary.", "layperson_summary": "Error generating summary. Please try again later."}, "enzyme_profile": {}}
 
 @app.get("/patient/history")
 async def get_patient_history(
@@ -575,6 +575,8 @@ async def get_patient_history(
         
     return {"history": results}
 
+import base64
+
 @app.get("/passport/{user_id}")
 async def get_patient_passport(
     user_id: int,
@@ -590,21 +592,39 @@ async def get_patient_passport(
     history_data = [{"drug": h.drug_name, "risk": h.risk_level, "toxicity": h.toxicity_score, "date": h.created_at.isoformat() if h.created_at else None} for h in history]
     
     # Get Summary (if VCF exists)
-    summary_text = "No genomic data available."
+    summary_data = {
+        "technical_narrative": "No genomic data available.",
+        "layperson_summary": "Please upload a VCF file to generate a summary."
+    }
+    enzyme_profile = {}
+    
     latest_vcf = db.query(VCFFile).filter(VCFFile.user_id == user_id).order_by(VCFFile.upload_date.desc()).first()
     if latest_vcf and os.path.exists(latest_vcf.file_path):
         try:
             enzyme_profile = await extract_enzyme_profile(latest_vcf.file_path)
-            summary_text = await generate_patient_summary(enzyme_profile)
+            summary_data = await generate_patient_summary(enzyme_profile)
         except Exception as e:
             logger.error(f"Passport summary error: {e}")
-            summary_text = "Error generating summary."
+            summary_data = {
+                "technical_narrative": "Error generating summary.",
+                "layperson_summary": "Error generating summary."
+            }
             
-    return {
+    passport_payload = {
         "patient_id": user_id,
         "name": user.name,
-        "summary": summary_text,
+        "enzyme_profile": enzyme_profile,
+        "summary": summary_data,
         "history": history_data
+    }
+    
+    # Generate Base64 encoded payload for QR Code
+    json_str = json.dumps(passport_payload)
+    encoded_data = base64.urlsafe_b64encode(json_str.encode()).decode('utf-8')
+    
+    return {
+        "passport_data": passport_payload,
+        "encoded_passport": encoded_data
     }
 
 # ==============================
