@@ -73,7 +73,8 @@ def generate_clinical_pdf(user_info: dict, enzyme_profile: dict, drug_results: l
     
     # --- 2. PATIENT INFORMATION ---
     Elements.append(Paragraph("Patient Information", heading_style))
-    analysis_id = user_info.get("analysis_id", str(uuid.uuid4())[:8].upper())
+    # Fallback user_id check
+    analysis_id = user_info.get("analysis_id") or user_info.get("user_id") or str(uuid.uuid4())[:8].upper()
     
     patient_data = [
         ["Name:", user_info.get("name", "Unknown")],

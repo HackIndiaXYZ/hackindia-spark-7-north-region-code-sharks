@@ -2,13 +2,14 @@ import sys
 import subprocess
 
 def check_and_install_dependencies():
-    required = ["google-generativeai", "authlib", "itsdangerous", "httpx", "sqlalchemy", "python-dotenv", "PyVCF3", "qrcode", "pydantic", "fastapi", "uvicorn", "starlette", "python-multipart"]
+    # Update to include reportlab and the NEW google-genai 
+    required = ["reportlab", "google-genai", "authlib", "itsdangerous", "httpx", "sqlalchemy", "python-dotenv", "PyVCF3", "qrcode", "pydantic", "fastapi", "uvicorn", "starlette", "python-multipart"]
     for package in required:
         try:
             # Map pip package names to python import names
             import_name = package.replace("-", "_")
-            if package == "google-generativeai":
-                import_name = "google.generativeai"
+            if package == "google-genai":
+                import_name = "google.genai"
             elif package == "python-dotenv":
                 import_name = "dotenv"
             elif package == "PyVCF3":
@@ -42,7 +43,12 @@ from starlette.middleware.sessions import SessionMiddleware
 # -----------------------------
 # PDF Generation Import
 # -----------------------------
-from report_generator import generate_clinical_pdf
+try:
+    from report_generator import generate_clinical_pdf
+    PDF_SUPPORT = True
+except ImportError as e:
+    print(f"Warning: PDF generation disabled. Error importing report_generator: {e}")
+    PDF_SUPPORT = False
 
 # -----------------------------
 # Database & Auth Integrations
@@ -606,6 +612,9 @@ async def get_patient_passport(
 # ==============================
 @app.post("/generate-report")
 async def generate_report(req: ReportRequest):
+    if not PDF_SUPPORT:
+        raise HTTPException(status_code=501, detail="PDF generation is currently unavailable due to missing dependencies.")
+        
     try:
         # Generate the PDF using model_dump() instead of deprecated dict()
         pdf_bytes = generate_clinical_pdf(

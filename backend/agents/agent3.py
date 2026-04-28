@@ -256,7 +256,7 @@ async def generate_patient_summary(enzyme_profile: Dict[str, str], multi_drug_re
     If multi_drug_results is provided, incorporates those specific drug checks into the combined clinical summary.
     """
     if not GENAI_AVAILABLE:
-        return "AI summary unavailable due to missing dependencies (google.generativeai). Please consult a clinical geneticist."
+        return "AI summary unavailable due to missing dependencies (google.genai). Please consult a clinical geneticist."
         
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
