@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, DateTime, Float
 from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy.ext.declarative import declarative_base
 import datetime
@@ -28,6 +28,7 @@ class User(Base):
 
     # Relationship to files
     files = relationship("VCFFile", back_populates="owner")
+    history = relationship("DrugCheckHistory", back_populates="user")
 
 class VCFFile(Base):
     __tablename__ = "vcf_files"
@@ -40,6 +41,19 @@ class VCFFile(Base):
 
     # Relationship to user
     owner = relationship("User", back_populates="files")
+
+class DrugCheckHistory(Base):
+    __tablename__ = "drug_check_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    drug_name = Column(String, index=True)
+    risk_level = Column(String)
+    toxicity_score = Column(Float)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    # Relationship to user
+    user = relationship("User", back_populates="history")
 
 # Create all tables
 Base.metadata.create_all(bind=engine)

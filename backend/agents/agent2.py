@@ -44,6 +44,15 @@ CLINICAL_MATRIX = {
     }
 }
 
+def get_toxicity_score_from_risk(risk_level: str) -> float:
+    if risk_level == "High":
+        return 0.85
+    elif risk_level == "Moderate":
+        return 0.50
+    elif risk_level == "Low":
+        return 0.15
+    return 0.0
+
 async def calculate_risk(enzyme_profile: Dict[str, str], drug_name: str) -> Dict[str, Any]:
     """
     Agent 2: Deterministic Risk Engine
@@ -67,19 +76,26 @@ async def calculate_risk(enzyme_profile: Dict[str, str], drug_name: str) -> Dict
                 "insufficient_data": True,
                 "confidence": 0.5,
                 "source": "Clinical Matrix (Data Gap)",
-                "needs_ai": False
+                "needs_ai": False,
+                "toxicity_level": 0.0
             }
 
         risk_level = rule["risks"].get(patient_phenotype, "Moderate")
+        toxicity_level = get_toxicity_score_from_risk(risk_level)
         
-        logger.info(f"MATRIX HIT: {drug_key} relies on {primary_enzyme} ({patient_phenotype}) -> {risk_level}")
+        # Specific clinical data override (e.g. Warfarin toxicity is high for Poor Metabolizers)
+        if drug_key == "Warfarin" and patient_phenotype == "Poor Metabolizer":
+            toxicity_level = 0.95
+            
+        logger.info(f"MATRIX HIT: {drug_key} relies on {primary_enzyme} ({patient_phenotype}) -> {risk_level} (Toxicity: {toxicity_level})")
         
         # Standardize: Confidence 1.0 for Matrix Hits (Matches Requirement 4)
         return {
             "risk_level": risk_level,
             "confidence": 1.0, 
             "source": "Clinical Matrix",
-            "needs_ai": False
+            "needs_ai": False,
+            "toxicity_level": toxicity_level
         }
 
     # --- 2. Fallback to BioNeMo or AI review ---
@@ -94,7 +110,8 @@ async def calculate_risk(enzyme_profile: Dict[str, str], drug_name: str) -> Dict
         "risk_level": "Moderate", # Safety-first default
         "confidence": 0.7,        # AI confidence
         "source": "Clinical AI Review",
-        "needs_ai": True
+        "needs_ai": True,
+        "toxicity_level": 0.5
     }
 
 async def _simulate_bionemo_interaction(drug_name: str, enzyme_profile: Dict[str, str]) -> Dict[str, Any]:
@@ -134,7 +151,8 @@ async def _simulate_bionemo_interaction(drug_name: str, enzyme_profile: Dict[str
             "risk_level": "High", # Based on simulated docking score
             "confidence": 0.85, 
             "source": "BioNeMo Molecular Simulation",
-            "needs_ai": True # Still needs Agent 3 to explain the result
+            "needs_ai": True, # Still needs Agent 3 to explain the result
+            "toxicity_level": 0.8 # Use binding affinity to estimate cellular stress
         }
     except Exception as e:
         logger.error(f"BioNeMo API failed: {e}")

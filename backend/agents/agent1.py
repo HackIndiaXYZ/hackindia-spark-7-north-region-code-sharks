@@ -4,7 +4,7 @@ from typing import Dict, Any
 logger = logging.getLogger("agent1")
 
 # ✅ TARGET_RSIDS for Early-Exit Stream Parsing
-TARGET_RSIDS = {"rs3892097", "rs1065852", "rs12248560", "rs4244285", "rs2740574"}
+TARGET_RSIDS = {"rs3892097", "rs1065852", "rs12248560", "rs4244285", "rs2740574", "rs1799853", "rs4149056"}
 
 # ✅ Hospital-Grade Coordinate Map (GRCh38)
 VARIANT_MAP = {
@@ -12,7 +12,9 @@ VARIANT_MAP = {
     'rs1065852': {'enzyme': 'CYP2D6', 'phenotype': 'Intermediate Metabolizer', 'chrom': '22', 'pos': 42128945},
     'rs12248560': {'enzyme': 'CYP2C19', 'phenotype': 'Ultra-Rapid Metabolizer', 'chrom': '10', 'pos': 94762706},
     'rs4244285': {'enzyme': 'CYP2C19', 'phenotype': 'Poor Metabolizer', 'chrom': '10', 'pos': 94775106},
-    'rs2740574': {'enzyme': 'CYP3A4', 'phenotype': 'Intermediate Metabolizer', 'chrom': '7', 'pos': 99781111}
+    'rs2740574': {'enzyme': 'CYP3A4', 'phenotype': 'Intermediate Metabolizer', 'chrom': '7', 'pos': 99781111},
+    'rs1799853': {'enzyme': 'CYP2C9', 'phenotype': 'Poor Metabolizer', 'chrom': '10', 'pos': 94981296},
+    'rs4149056': {'enzyme': 'SLCO1B1', 'phenotype': 'Poor Function', 'chrom': '12', 'pos': 21132431}
 }
 
 async def extract_enzyme_profile(vcf_source: Any) -> Dict[str, str]:
@@ -25,7 +27,9 @@ async def extract_enzyme_profile(vcf_source: Any) -> Dict[str, str]:
     profile = {
         "CYP2D6": "Insufficient Data",
         "CYP2C19": "Insufficient Data",
-        "CYP3A4": "Insufficient Data"
+        "CYP3A4": "Insufficient Data",
+        "CYP2C9": "Insufficient Data",
+        "SLCO1B1": "Insufficient Data"
     }
 
     if not vcf_source:

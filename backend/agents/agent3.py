@@ -204,6 +204,40 @@ def _normalize_action(action: str) -> str:
     if not action:
         return "Manual Review Required"
 
+async def generate_patient_summary(enzyme_profile: Dict[str, str]) -> str:
+    """
+    Agent 3: Master AI Summary
+    Generates a concise summary of the patient's genetic strengths and vulnerabilities based on their enzyme profile.
+    """
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return "AI summary unavailable due to missing API key. Please consult a clinical geneticist."
+        
+    client = genai.Client(api_key=api_key)
+    
+    prompt = f"""
+    You are a Clinical Pharmacogenomics expert.
+    Analyze the following patient enzyme profile: {json.dumps(enzyme_profile)}.
+    
+    Generate a "Master AI Summary" of the patient's genetic strengths and vulnerabilities in 2-3 sentences.
+    Focus on general sensitivities (e.g., "General sensitivity to statins and opioids detected due to Poor Metabolizer status").
+    Keep it professional, clinical, and concise. Do not mention the VCF file.
+    """
+    
+    try:
+        response = await asyncio.to_thread(
+            client.models.generate_content,
+            model=PRIMARY_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=GEMINI_TEMPERATURE
+            )
+        )
+        return getattr(response, "text", "Unable to generate summary.").strip()
+    except Exception as e:
+        logger.error(f"Failed to generate patient summary: {e}")
+        return "Error generating clinical summary. Standard precautions apply."
+
     action = action.lower()
 
     if "avoid" in action:
