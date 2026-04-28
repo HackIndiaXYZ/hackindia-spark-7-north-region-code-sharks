@@ -8,10 +8,10 @@ logger = logging.getLogger("agent2")
 
 # ✅ Safe AI Import
 try:
-    import google.generativeai as genai
+    from google import genai
     GENAI_AVAILABLE = True
 except ImportError:
-    logger.warning("📦 google.generativeai module not found. AI features will be disabled in Agent 2.")
+    logger.warning("📦 google.genai module not found. AI features will be disabled in Agent 2.")
     GENAI_AVAILABLE = False
 
 # ✅ Clinical Knowledge Matrix (Deterministic Guidelines)
@@ -51,6 +51,94 @@ CLINICAL_MATRIX = {
             "Poor Metabolizer": "High",
             "Normal": "Low"
         }
+    },
+    "Acetaminophen": {
+        "enzyme": "CYP3A4",
+        "risks": {
+            "Poor Metabolizer": "Moderate",
+            "Intermediate Metabolizer": "Moderate",
+            "Normal": "Low",
+            "Ultra-Rapid Metabolizer": "High"
+        }
+    },
+    "Ibuprofen": {
+        "enzyme": "CYP2C9",
+        "risks": {
+            "Poor Metabolizer": "High",
+            "Intermediate Metabolizer": "Moderate",
+            "Normal": "Low",
+            "Ultra-Rapid Metabolizer": "Moderate"
+        }
+    },
+    "Tramadol": {
+        "enzyme": "CYP2D6",
+        "risks": {
+            "Poor Metabolizer": "High",
+            "Intermediate Metabolizer": "Moderate",
+            "Normal": "Low",
+            "Ultra-Rapid Metabolizer": "High"
+        }
+    },
+    "Atorvastatin": {
+        "enzyme": "CYP3A4",
+        "risks": {
+            "Poor Metabolizer": "High",
+            "Intermediate Metabolizer": "Moderate",
+            "Normal": "Low",
+            "Ultra-Rapid Metabolizer": "Moderate"
+        }
+    },
+    "Metoprolol": {
+        "enzyme": "CYP2D6",
+        "risks": {
+            "Poor Metabolizer": "High",
+            "Intermediate Metabolizer": "Moderate",
+            "Normal": "Low",
+            "Ultra-Rapid Metabolizer": "Moderate"
+        }
+    },
+    "Losartan": {
+        "enzyme": "CYP2C9",
+        "risks": {
+            "Poor Metabolizer": "High",
+            "Intermediate Metabolizer": "Moderate",
+            "Normal": "Low",
+            "Ultra-Rapid Metabolizer": "Moderate"
+        }
+    },
+    "Omeprazole": {
+        "enzyme": "CYP2C19",
+        "risks": {
+            "Poor Metabolizer": "High",
+            "Intermediate Metabolizer": "Moderate",
+            "Normal": "Low",
+            "Ultra-Rapid Metabolizer": "Moderate"
+        }
+    },
+    "Sertraline": {
+        "enzyme": "CYP2C19",
+        "risks": {
+            "Poor Metabolizer": "High",
+            "Intermediate Metabolizer": "Moderate",
+            "Normal": "Low",
+            "Ultra-Rapid Metabolizer": "Moderate"
+        }
+    },
+    "Diazepam": {
+        "enzyme": "CYP2C19",
+        "risks": {
+            "Poor Metabolizer": "High",
+            "Intermediate Metabolizer": "Moderate",
+            "Normal": "Low",
+            "Ultra-Rapid Metabolizer": "Moderate"
+        }
+    },
+    "Metformin": {
+        "enzyme": "SLC22A1",
+        "risks": {
+            "Poor Function": "High",
+            "Normal Function": "Low"
+        }
     }
 }
 
@@ -63,31 +151,48 @@ def get_toxicity_score_from_risk(risk_level: str) -> float:
         return 0.15
     return 0.0
 
-async def _validate_drug_with_ai(drug_name: str) -> bool:
-    """Uses Gemini to quickly validate if a string is a real pharmaceutical drug."""
+async def _infer_drug_pathway_with_ai(drug_name: str) -> dict:
+    """Uses Gemini to validate if it's a real drug, get its generic name, and primary CYP450 enzyme."""
     if not GENAI_AVAILABLE:
         logger.warning("GENAI_AVAILABLE is False, skipping AI drug validation. Assuming valid.")
-        return True
+        return {"valid": True, "generic_name": drug_name.title(), "enzyme": "CYP3A4"} # Fallback
 
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         logger.warning("GEMINI_API_KEY missing, skipping AI drug validation. Assuming valid.")
-        return True
+        return {"valid": True, "generic_name": drug_name.title(), "enzyme": "CYP3A4"}
         
     client = genai.Client(api_key=api_key)
-    prompt = f"Is '{drug_name}' a real FDA-approved or globally recognized pharmaceutical drug? Answer only 'VALID' or 'INVALID'."
+    prompt = f"""
+    Analyze the pharmaceutical drug or brand name '{drug_name}'.
+    What is the primary CYP450 enzyme responsible for the metabolism of {drug_name}?
+    Return ONLY a valid JSON object with EXACTLY these keys:
+    "valid": boolean (true if it's a real FDA-approved or globally recognized drug, false otherwise),
+    "generic_name": string (the generic chemical name, capitalized, e.g., 'Acetaminophen'. If invalid, return the input),
+    "enzyme": string (the primary CYP450 or other enzyme responsible for metabolism, e.g., 'CYP3A4' or 'CYP2D6'. If none or unknown, return 'Unknown')
+    """
     
     try:
         response = await asyncio.to_thread(
             client.models.generate_content,
-            model="gemini-1.5-flash",
+            model="gemini-2.0-flash-lite",
             contents=prompt
         )
-        result = getattr(response, "text", "VALID").strip().upper()
-        return "VALID" in result
+        import json
+        text = getattr(response, "text", "{}").strip()
+        if text.startswith("```json"):
+            text = text[7:-3].strip()
+        elif text.startswith("```"):
+            text = text[3:-3].strip()
+        data = json.loads(text)
+        return {
+            "valid": data.get("valid", True),
+            "generic_name": data.get("generic_name", drug_name.title()),
+            "enzyme": data.get("enzyme", "Unknown")
+        }
     except Exception as e:
         logger.error(f"Drug validation AI failed: {e}")
-        return True # Fail open to avoid blocking real drugs on API error
+        return {"valid": True, "generic_name": drug_name.title(), "enzyme": "CYP3A4"} # Fail open
 
 async def calculate_risk(enzyme_profile: Dict[str, str], drug_name: str) -> Dict[str, Any]:
     """
@@ -98,15 +203,16 @@ async def calculate_risk(enzyme_profile: Dict[str, str], drug_name: str) -> Dict
     
     drug_key = drug_name.title()
     
-    # --- 0. Drug Validation ---
+    # --- 0. Drug Validation & AI Inference ---
+    inferred_data = None
     if drug_key not in CLINICAL_MATRIX:
-        is_valid = await _validate_drug_with_ai(drug_name)
-        if not is_valid:
+        inferred_data = await _infer_drug_pathway_with_ai(drug_name)
+        if not inferred_data.get("valid"):
             logger.warning(f"INVALID DRUG DETECTED: {drug_name}")
             return {
                 "action": "Invalid Drug",
                 "risk_level": "Unknown",
-                "clinical_note": f"The drug name '{drug_name}' was not recognized as a valid pharmaceutical agent. Please check the spelling.",
+                "clinical_note": "Name not recognized.",
                 "alternative": None,
                 "confidence": 0.0,
                 "toxicity_level": 0.0,
@@ -115,6 +221,9 @@ async def calculate_risk(enzyme_profile: Dict[str, str], drug_name: str) -> Dict
                 "invalid_drug": True,
                 "radar_data": {"Metabolism": 0.0, "Binding": 0.0, "Toxicity": 0.0, "Confidence": 0.0}
             }
+        
+        # Override drug_key with generic name if inferred
+        drug_key = inferred_data.get("generic_name", drug_key)
 
     # --- 1. Deterministic Matrix Check ---
     if drug_key in CLINICAL_MATRIX:
@@ -167,6 +276,24 @@ async def calculate_risk(enzyme_profile: Dict[str, str], drug_name: str) -> Dict
         primary_enzyme = rule["enzyme"]
         patient_phenotype = enzyme_profile.get(primary_enzyme, "Insufficient Data")
         
+        # --- CUSTOM METFORMIN LOGIC ---
+        if drug_key == "Metformin" and patient_phenotype == "Insufficient Data":
+            logger.info("MATRIX HIT: Metformin missing SLC22A1, falling back to general renal clearance.")
+            return {
+                "risk_level": "Low",
+                "confidence": 0.8,
+                "source": "Clinical Matrix (Renal Fallback)",
+                "needs_ai": False,
+                "toxicity_level": 0.15,
+                "clinical_note_override": "SLC22A1 genomic data missing. Fallback to standard renal clearance protocols. Monitor eGFR.",
+                "radar_data": {
+                    "Metabolism": 0.8,
+                    "Binding": 0.4,
+                    "Toxicity": 0.15,
+                    "Confidence": 0.8
+                }
+            }
+            
         # --- Fix 'False Normal' Trap Handling ---
         if patient_phenotype == "Insufficient Data":
             logger.warning(f"INSUFFICIENT DATA for {drug_key} ({primary_enzyme})")
@@ -200,8 +327,47 @@ async def calculate_risk(enzyme_profile: Dict[str, str], drug_name: str) -> Dict
         }
 
     # --- 2. Fallback to BioNeMo or AI review ---
-    logger.info(f"MATRIX MISS: {drug_name} not found in deterministic engine. Attempting BioNeMo Simulation.")
+    logger.info(f"MATRIX MISS: {drug_name} not found in deterministic engine. Attempting AI Smart Simulation Fallback.")
     
+    # Use the inferred enzyme from earlier validation step
+    inferred_enzyme = inferred_data.get("enzyme", "Unknown") if inferred_data else "Unknown"
+    
+    if inferred_enzyme != "Unknown":
+        patient_phenotype = enzyme_profile.get(inferred_enzyme, "Insufficient Data")
+        if patient_phenotype == "Insufficient Data":
+            risk_level = "Low"
+            clinical_note_base = f"AI Simulation: Based on pharmacological pathways, {drug_key} is primarily metabolized by {inferred_enzyme}, but this genomic marker is missing from your VCF file. Falling back to standard clearance."
+        else:
+            # Smart Simulation Risk Calculation
+            if patient_phenotype == "Poor Metabolizer":
+                risk_level = "High"
+            elif patient_phenotype == "Intermediate Metabolizer":
+                risk_level = "Moderate"
+            else:
+                risk_level = "Low"
+                
+            clinical_note_base = f"AI Simulation: Based on pharmacological pathways, {drug_key} is primarily metabolized by {inferred_enzyme}. Your profile shows you are a {patient_phenotype}."
+            
+        toxicity_level = get_toxicity_score_from_risk(risk_level)
+        
+        logger.info(f"AI SMART SIMULATION HIT: {drug_key} -> {inferred_enzyme} ({patient_phenotype}) -> {risk_level}")
+        
+        return {
+            "risk_level": risk_level,
+            "confidence": 0.7, 
+            "source": "AI Smart Simulation",
+            "needs_ai": True,
+            "toxicity_level": toxicity_level,
+            "clinical_note_override": clinical_note_base,
+            "radar_data": {
+                "Metabolism": 0.2 if risk_level == "High" else 0.8,
+                "Binding": 0.9 if toxicity_level > 0.5 else 0.4,
+                "Toxicity": toxicity_level,
+                "Confidence": 0.7
+            }
+        }
+
+    logger.info(f"AI SIMULATION MISS: Attempting BioNeMo Simulation for {drug_name}.")
     bionemo_result = await _simulate_bionemo_interaction(drug_name, enzyme_profile)
     if bionemo_result:
         return bionemo_result
@@ -210,9 +376,9 @@ async def calculate_risk(enzyme_profile: Dict[str, str], drug_name: str) -> Dict
     
     # AI Fallback genomic missing logic
     has_insufficient_data = any(v == "Insufficient Data" for v in enzyme_profile.values())
-    clinical_note_base = ""
-    if has_insufficient_data:
-        clinical_note_base = f"Drug recognized, but required genomic markers (e.g., CYP2C9) are missing from your VCF file."
+    clinical_note_base = f"AI Simulation: Based on pharmacological pathways, {drug_key} is primarily metabolized by {inferred_enzyme}." if inferred_enzyme != "Unknown" else ""
+    if has_insufficient_data and not clinical_note_base:
+        clinical_note_base = f"Drug recognized, but required genomic markers are missing from your VCF file."
     
     return {
         "risk_level": "Moderate", # Safety-first default

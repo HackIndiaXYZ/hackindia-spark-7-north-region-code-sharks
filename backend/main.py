@@ -414,13 +414,11 @@ async def check_prescription(
                     drug_name=drug_name,
                     confidence=risk_data["confidence"],
                     insufficient_data=risk_data.get("insufficient_data", False),
-                    request_id=request_id
+                    request_id=request_id,
+                    clinical_note_override=risk_data.get("clinical_note_override")
                 )
                 
-                # Inject missing genomics note if provided by Agent 2 fallback
                 clinical_note = recommendation.get("clinical_note", "No note available.")
-                if risk_data.get("clinical_note_override"):
-                    clinical_note = f"{risk_data['clinical_note_override']} {clinical_note}"
                 
                 # Toxicity Logic
                 toxicity = risk_data.get("toxicity_level", 0.0)
