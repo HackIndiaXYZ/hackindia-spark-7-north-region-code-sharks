@@ -4,17 +4,26 @@ from typing import Dict, Any
 logger = logging.getLogger("agent1")
 
 # ✅ TARGET_RSIDS for Early-Exit Stream Parsing
-TARGET_RSIDS = {"rs3892097", "rs1065852", "rs12248560", "rs4244285", "rs2740574", "rs1799853", "rs4149056"}
+TARGET_RSIDS = {
+    "rs3892097", "rs1065852", 
+    "rs12248560", "rs4244285", 
+    "rs2740574", 
+    "rs1799853", "rs1057910", 
+    "rs4149056", 
+    "rs9923231"
+}
 
 # ✅ Hospital-Grade Coordinate Map (GRCh38)
 VARIANT_MAP = {
     'rs3892097': {'enzyme': 'CYP2D6', 'phenotype': 'Poor Metabolizer', 'chrom': '22', 'pos': 42127941},
     'rs1065852': {'enzyme': 'CYP2D6', 'phenotype': 'Intermediate Metabolizer', 'chrom': '22', 'pos': 42128945},
-    'rs12248560': {'enzyme': 'CYP2C19', 'phenotype': 'Ultra-Rapid Metabolizer', 'chrom': '10', 'pos': 94762706},
-    'rs4244285': {'enzyme': 'CYP2C19', 'phenotype': 'Poor Metabolizer', 'chrom': '10', 'pos': 94775106},
+    'rs12248560': {'enzyme': 'CYP2C19', 'phenotype': 'Ultra-Rapid Metabolizer', 'chrom': '10', 'pos': 94762706, 'alt_match': 'T'},
+    'rs4244285': {'enzyme': 'CYP2C19', 'phenotype': 'Poor Metabolizer', 'chrom': '10', 'pos': 94775106, 'alt_match': 'A'},
     'rs2740574': {'enzyme': 'CYP3A4', 'phenotype': 'Intermediate Metabolizer', 'chrom': '7', 'pos': 99781111},
-    'rs1799853': {'enzyme': 'CYP2C9', 'phenotype': 'Poor Metabolizer', 'chrom': '10', 'pos': 94981296},
-    'rs4149056': {'enzyme': 'SLCO1B1', 'phenotype': 'Poor Function', 'chrom': '12', 'pos': 21132431}
+    'rs1799853': {'enzyme': 'CYP2C9', 'phenotype': 'Intermediate Metabolizer', 'chrom': '10', 'pos': 94981296, 'alt_match': 'T'},
+    'rs1057910': {'enzyme': 'CYP2C9', 'phenotype': 'Poor Metabolizer', 'chrom': '10', 'pos': 94981297, 'alt_match': 'C'},
+    'rs4149056': {'enzyme': 'SLCO1B1', 'phenotype': 'Poor Function', 'chrom': '12', 'pos': 21132431},
+    'rs9923231': {'enzyme': 'VKORC1', 'phenotype': 'High Sensitivity', 'chrom': '16', 'pos': 3110000, 'alt_match': 'A'}
 }
 
 async def extract_enzyme_profile(vcf_source: Any) -> Dict[str, str]:
@@ -29,7 +38,8 @@ async def extract_enzyme_profile(vcf_source: Any) -> Dict[str, str]:
         "CYP2C19": "Insufficient Data",
         "CYP3A4": "Insufficient Data",
         "CYP2C9": "Insufficient Data",
-        "SLCO1B1": "Insufficient Data"
+        "SLCO1B1": "Insufficient Data",
+        "VKORC1": "Insufficient Data"
     }
 
     if not vcf_source:
@@ -44,10 +54,12 @@ async def extract_enzyme_profile(vcf_source: Any) -> Dict[str, str]:
     try:
         # Determine if we are reading from a path or a file-like object
         if isinstance(vcf_source, str):
-            logger.info(f"LOG: Opening file {vcf_source}...")
+            import os
+            exact_filename = os.path.basename(vcf_source)
+            logger.info(f"LOG: Opening file [{exact_filename}] for genomic analysis... (Full path: {vcf_source})")
             f = open(vcf_source, "r")
         else:
-            logger.info("LOG: Reading from upload stream...")
+            logger.info("LOG: Reading from upload stream for genomic analysis...")
             f = vcf_source
 
         # Hunting Logic
@@ -87,8 +99,15 @@ async def extract_enzyme_profile(vcf_source: Any) -> Dict[str, str]:
                         
                         # 3. Mutation Check: Ensure ALT is not '.'
                         if alt_allele != "." and alt_allele != "":
-                            logger.info(f"LOG: ALT allele is {alt_allele}. Mapping to phenotype...")
                             target = VARIANT_MAP[variant_id]
+                            
+                            # Ensure specific allele match if required
+                            required_alt = target.get('alt_match')
+                            if required_alt and required_alt not in alt_allele:
+                                logger.warning(f"LOG: rsID {variant_id} found but ALT allele ({alt_allele}) does not match required ({required_alt}). Skipping.")
+                                continue
+
+                            logger.info(f"LOG: ALT allele is {alt_allele}. Mapping to phenotype...")
                             found_variants.append((target['enzyme'], target['phenotype']))
                             found_rsids.add(variant_id)
                         else:
@@ -104,7 +123,9 @@ async def extract_enzyme_profile(vcf_source: Any) -> Dict[str, str]:
 
         # Phenotype Mapping
         impact_order = {
-            "Poor Metabolizer": 4, 
+            "Poor Metabolizer": 6, 
+            "High Sensitivity": 5,
+            "Poor Function": 4,
             "Ultra-Rapid Metabolizer": 3, 
             "Intermediate Metabolizer": 2, 
             "Normal": 1, 

@@ -9,3 +9,7 @@ google-generativeai
 firebase-admin
 requests
 python-multipart
+authlib
+itsdangerous
+httpx
+sqlalchemy

@@ -2,8 +2,16 @@ import os
 import json
 import logging
 import asyncio
-from google import genai
-from google.genai import types
+
+try:
+    import google.generativeai as genai
+    GENAI_AVAILABLE = True
+except ImportError:
+    import logging
+    logger = logging.getLogger("agent3")
+    logger.warning("📦 google.generativeai module not found. AI features will be disabled in Agent 3.")
+    GENAI_AVAILABLE = False
+
 from typing import Dict, Any, Optional
 
 import hashlib
@@ -98,7 +106,10 @@ async def generate_clinical_recommendation(
 # 🔬 AI CALL
 # ===============================
 async def _get_ai_recommendation(api_key, drug_name, findings, risk_level):
-
+    if not GENAI_AVAILABLE:
+        logger.warning("GENAI_AVAILABLE is False, skipping AI recommendation.")
+        return None
+        
     client = genai.Client(api_key=api_key)
 
     prompt = f"""
@@ -204,22 +215,30 @@ def _normalize_action(action: str) -> str:
     if not action:
         return "Manual Review Required"
 
-async def generate_patient_summary(enzyme_profile: Dict[str, str]) -> str:
+async def generate_patient_summary(enzyme_profile: Dict[str, str], multi_drug_results: list = None) -> str:
     """
     Agent 3: Master AI Summary
     Generates a concise summary of the patient's genetic strengths and vulnerabilities based on their enzyme profile.
+    If multi_drug_results is provided, incorporates those specific drug checks into the combined clinical summary.
     """
+    if not GENAI_AVAILABLE:
+        return "AI summary unavailable due to missing dependencies (google.generativeai). Please consult a clinical geneticist."
+        
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         return "AI summary unavailable due to missing API key. Please consult a clinical geneticist."
         
     client = genai.Client(api_key=api_key)
     
+    drug_context = ""
+    if multi_drug_results:
+        drug_context = f"\nSpecific drug analysis results: {json.dumps(multi_drug_results)}\nIncorporate these specific drug findings into the summary."
+
     prompt = f"""
     You are a Clinical Pharmacogenomics expert.
-    Analyze the following patient enzyme profile: {json.dumps(enzyme_profile)}.
+    Analyze the following patient enzyme profile: {json.dumps(enzyme_profile)}.{drug_context}
     
-    Generate a "Master AI Summary" of the patient's genetic strengths and vulnerabilities in 2-3 sentences.
+    Generate a "Master AI Summary" of the patient's genetic strengths and vulnerabilities in 2-4 sentences.
     Focus on general sensitivities (e.g., "General sensitivity to statins and opioids detected due to Poor Metabolizer status").
     Keep it professional, clinical, and concise. Do not mention the VCF file.
     """
