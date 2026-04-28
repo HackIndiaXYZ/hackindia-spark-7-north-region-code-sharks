@@ -31,6 +31,8 @@ const SUPPORTED_DRUGS = [
   "Ibuprofen", "Aspirin", "Metformin", "Tamoxifen", "Oxycodone"
 ];
 
+const IP = "10.113.23.97"; // YOUR CURRENT NETWORK IP
+
 export default function Dashboard({ user }) {
   const [files, setFiles] = useState([]);
   const [selectedFileId, setSelectedFileId] = useState(null);
@@ -832,7 +834,7 @@ export default function Dashboard({ user }) {
                   <div className="p-8 flex flex-col items-center">
                     <div className="bg-white p-4 rounded-sm mb-6">
                       <QRCodeCanvas 
-                        value={`http://10.113.23.97:8000/passport/download/${user?.id}`}
+                        value={`http://${IP}:8000/passport/download/${user?.id}`}
                         size={200}
                         level="H"
                         fgColor="#0f172a"

@@ -34,7 +34,7 @@ import uuid
 import shutil
 from typing import Optional, List
 from fastapi import FastAPI, UploadFile, File, Form, Request, Depends, HTTPException, Response
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -74,7 +74,7 @@ logger = logging.getLogger("genetic-guardrail")
 # ==============================
 from agents.agent1 import extract_enzyme_profile
 from agents.agent2 import calculate_risk
-from agents.agent3 import generate_clinical_recommendation, generate_patient_summary
+from agents.agent3 import generate_clinical_recommendation, get_dna_translation, get_dna_translation_hardened
 
 from dotenv import load_dotenv
 
@@ -88,7 +88,7 @@ app = FastAPI(title="Genetic Guardrail - Clinical Grade")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -547,13 +547,15 @@ async def get_patient_summary(
         # Agent 1 parses entire VCF for known pharmacogenes
         enzyme_profile = await extract_enzyme_profile(latest_vcf.file_path)
         
+        logger.info(f"LOG: Sending Profile to Agent 3: {json.dumps(enzyme_profile)}")
+        
         # Agent 3 generates "Master AI Summary"
-        master_summary = await generate_patient_summary(enzyme_profile)
+        master_summary = await get_dna_translation(enzyme_profile)
         
         return {"summary": master_summary, "enzyme_profile": enzyme_profile}
     except Exception as e:
         logger.error(f"Failed to generate patient summary: {e}")
-        return {"summary": {"doctor_narrative": "Error generating summary.", "patient_narrative": "Error generating summary. Please try again later."}, "enzyme_profile": {}}
+        return {"summary": {"technical_narrative": "Error generating summary.", "layperson_summary": "Error generating summary. Please try again later."}, "enzyme_profile": {}}
 
 @app.get("/patient/history")
 async def get_patient_history(
@@ -602,7 +604,7 @@ async def get_patient_passport(
     if latest_vcf and os.path.exists(latest_vcf.file_path):
         try:
             enzyme_profile = await extract_enzyme_profile(latest_vcf.file_path)
-            summary_data = await generate_patient_summary(enzyme_profile)
+            summary_data = await get_dna_translation(enzyme_profile)
         except Exception as e:
             logger.error(f"Passport summary error: {e}")
             summary_data = {
@@ -652,57 +654,51 @@ async def generate_report(req: ReportRequest):
         raise HTTPException(status_code=500, detail="Failed to generate report")
 
 @app.get("/passport/download/{user_id}")
-async def download_passport_pdf(
-    user_id: int,
-    db: Session = Depends(get_db)
-):
+async def download_passport_pdf(user_id: int, db: Session = Depends(get_db)):
     if not PDF_SUPPORT:
         raise HTTPException(status_code=501, detail="PDF generation is currently unavailable due to missing dependencies.")
         
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="Patient not found")
-        
-    # Get latest VCF and run Agent 1 -> Agent 3 pipeline
+    # 1. Get the latest VCF file for this user from the database
+    vcf_record = db.query(VCFFile).filter(VCFFile.user_id == user_id).order_by(VCFFile.id.desc()).first()
+    if not vcf_record:
+        return {"error": "No VCF file found for this user."}
+
+    # 2. RUN AGENT 1 (Parse the physical file)
+    vcf_path = os.path.abspath(vcf_record.file_path)
     enzyme_profile = {}
-    summary_data = {
-        "doctor_narrative": "No genomic data available.",
-        "patient_narrative": "Please upload a VCF file to generate a summary."
-    }
-    
-    latest_vcf = db.query(VCFFile).filter(VCFFile.user_id == user_id).order_by(VCFFile.upload_date.desc()).first()
-    if latest_vcf and os.path.exists(latest_vcf.file_path):
-        try:
-            enzyme_profile = await extract_enzyme_profile(latest_vcf.file_path)
-            summary_data = await generate_patient_summary(enzyme_profile)
-        except Exception as e:
-            logger.error(f"Passport PDF summary error: {e}")
-            summary_data = {
-                "doctor_narrative": "Error generating summary.",
-                "patient_narrative": "Error generating summary."
-            }
-            
+    if os.path.exists(vcf_path):
+        enzyme_profile = await extract_enzyme_profile(vcf_path)
+
+    # 3. RUN AGENT 3 (Generate the DNA Blueprint)
+    # Force this to be AWAITED properly
+    translation = await get_dna_translation_hardened(enzyme_profile)
+
+    # 4. FETCH USER INFO
+    user_record = db.query(User).filter(User.id == user_id).first()
+    if not user_record:
+        return {"error": "Patient not found."}
+
+    # 5. GENERATE PDF (Pass ALL data directly)
     user_info = {
-        "user_id": str(user.id),
-        "name": user.name,
-        "email": user.email,
-        "summary": summary_data
+        "user_id": str(user_record.id),
+        "name": user_record.name,
+        "email": user_record.email
     }
     
-    try:
-        pdf_bytes = generate_clinical_pdf(
-            user_info=user_info,
-            enzyme_profile=enzyme_profile,
-            drug_results=[]  # Assuming we only want the blueprint and profile, no drug results for now, or fetch history? The prompt says "DNA Translation Blueprint".
-        )
-        return Response(
-            content=pdf_bytes,
-            media_type="application/pdf",
-            headers={"Content-Disposition": "attachment; filename=Genomic_Passport.pdf"}
-        )
-    except Exception as e:
-        logger.error(f"Failed to generate passport PDF: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to generate passport PDF")
+    pdf_bytes = generate_clinical_pdf(
+        user_info=user_info,
+        enzyme_profile=enzyme_profile,
+        drug_results=[],
+        tech_note=translation.get("technical_narrative", ""),
+        lay_note=translation.get("layperson_summary", "")
+    )
+    
+    # Save bytes to a physical file so FileResponse can serve it
+    pdf_path = f"DNA_Blueprint_{user_id}.pdf"
+    with open(pdf_path, "wb") as f:
+        f.write(pdf_bytes)
+        
+    return FileResponse(pdf_path, media_type='application/pdf', filename=f"DNA_Blueprint_{user_id}.pdf")
 
 # ==============================
 # ENTRY POINT

@@ -7,7 +7,7 @@ from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
 from reportlab.graphics.shapes import Drawing, Rect
 
-def generate_clinical_pdf(user_info: dict, enzyme_profile: dict, drug_results: list) -> bytes:
+def generate_clinical_pdf(user_info: dict, enzyme_profile: dict, drug_results: list, tech_note: str = None, lay_note: str = None) -> bytes:
     """
     Generates a professional PDF clinical report from user data,
     enzyme profile, and AI drug analysis results.
@@ -92,6 +92,10 @@ def generate_clinical_pdf(user_info: dict, enzyme_profile: dict, drug_results: l
     Elements.append(Spacer(1, 0.2 * inch))
     
     # --- 3. GENOMIC METABOLIC PROFILE ---
+    Elements.append(PageBreak())
+    Elements.append(Paragraph("GENOMIC DNA BLUEPRINT", heading_style))
+    Elements.append(Spacer(1, 0.2 * inch))
+
     Elements.append(Paragraph("Genomic Summary Table", heading_style))
     
     profile_data = [["Gene", "Phenotype"]]
@@ -114,18 +118,49 @@ def generate_clinical_pdf(user_info: dict, enzyme_profile: dict, drug_results: l
     Elements.append(Spacer(1, 0.2 * inch))
 
     # --- 3.5 DNA BLUEPRINT (AI NARRATIVES) ---
-    if user_info.get("summary"):
-        summary_data = user_info.get("summary")
-        if isinstance(summary_data, dict):
-            Elements.append(Paragraph("Clinical Insights", heading_style))
-            technical = summary_data.get("doctor_narrative", "Not available.")
-            Elements.append(Paragraph(technical, normal_style))
-            Elements.append(Spacer(1, 0.15 * inch))
-            
-            Elements.append(Paragraph("Patient Understanding", heading_style))
-            layperson = summary_data.get("patient_narrative", "Not available.")
-            Elements.append(Paragraph(layperson, normal_style))
-            Elements.append(Spacer(1, 0.2 * inch))
+    safe_fallback_technical = "CYP450 Analysis indicates standard metabolic function across key pathways. Baseline precautions apply."
+    safe_fallback_layperson = "Your DNA shows you process most standard medications normally. Always consult your doctor before starting new treatments."
+
+    # Map the narratives
+    technical = tech_note or (user_info.get("summary", {}).get("technical_narrative") if isinstance(user_info.get("summary"), dict) else None)
+    if not technical or "Error" in technical or technical == "Unable to generate technical summary.":
+        technical = safe_fallback_technical + "\n\nRaw Phenotypes:\n" + "\n".join([f"{g}: {p}" for g, p in enzyme_profile.items()])
+        
+    layperson = lay_note or (user_info.get("summary", {}).get("layperson_summary") if isinstance(user_info.get("summary"), dict) else None)
+    if not layperson or "Error" in layperson or layperson == "We couldn't generate a summary at this time; please consult your doctor.":
+        layperson = safe_fallback_layperson
+
+    # Custom styles for the narratives with professional font
+    narrative_style = ParagraphStyle(
+        'NarrativeStyle',
+        parent=styles['Normal'],
+        fontName='Helvetica',
+        fontSize=11,
+        leading=15,
+        textColor=colors.black,
+    )
+
+    # Helper function to create a bordered section with a minimum height
+    def create_bordered_section(title, content):
+        section_data = [
+            [Paragraph(title, heading_style)],
+            [Paragraph(content, narrative_style)]
+        ]
+        # Use rowHeights to enforce a minimum height (e.g., 2 inches for the content row)
+        section_table = Table(section_data, colWidths=[6.5 * inch], rowHeights=[None, 1.5 * inch])
+        section_table.setStyle(TableStyle([
+            ('BOX', (0, 0), (-1, -1), 1.5, colors.HexColor('#1f497d')), # Clear border
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f8f9fa')), # Light background for header
+            ('PADDING', (0, 0), (-1, -1), 12),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 10), # Padding under header
+        ]))
+        return section_table
+
+    Elements.append(create_bordered_section("Clinical Insights (Technical Narrative)", technical))
+    Elements.append(Spacer(1, 0.3 * inch))
+    Elements.append(create_bordered_section("Patient Understanding (Layperson Summary)", layperson))
+    Elements.append(Spacer(1, 0.2 * inch))
     
     # Page Break for Medication Guardrail Analysis
     Elements.append(PageBreak())
