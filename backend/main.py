@@ -2,7 +2,7 @@ import sys
 import subprocess
 
 def check_and_install_dependencies():
-    required = ["google-generativeai", "authlib", "itsdangerous", "httpx", "sqlalchemy", "python-dotenv", "PyVCF3", "qrcode", "pydantic"]
+    required = ["google-generativeai", "authlib", "itsdangerous", "httpx", "sqlalchemy", "python-dotenv", "PyVCF3", "qrcode", "pydantic", "fastapi", "uvicorn", "starlette", "python-multipart"]
     for package in required:
         try:
             # Map pip package names to python import names
@@ -16,7 +16,7 @@ def check_and_install_dependencies():
             
             __import__(import_name)
         except ImportError:
-            print(f"📦 Missing {package}. Attempting auto-install...")
+            print(f"Missing {package}. Attempting auto-install...")
             subprocess.check_call([sys.executable, "-m", "pip", "install", package])
 
 # Execute pre-flight check
@@ -32,12 +32,17 @@ import tempfile
 import uuid
 import shutil
 from typing import Optional, List
-from fastapi import FastAPI, UploadFile, File, Form, Request, Depends, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, Request, Depends, HTTPException, Response
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
+
+# -----------------------------
+# PDF Generation Import
+# -----------------------------
+from report_generator import generate_clinical_pdf
 
 # -----------------------------
 # Database & Auth Integrations
@@ -169,6 +174,24 @@ class VCFFileResponse(BaseModel):
     id: int
     filename: str
     upload_date: str
+
+class UserInfo(BaseModel):
+    name: str
+    email: str
+    analysis_id: Optional[str] = None
+
+class DrugReportItem(BaseModel):
+    drug_name: str
+    risk_level: str
+    action: str
+    clinical_note: str
+    alternative: Optional[str] = None
+    toxicity_level: float = 0.0
+
+class ReportRequest(BaseModel):
+    user_info: UserInfo
+    enzyme_profile: dict
+    drug_results: List[DrugReportItem]
 
 
 
@@ -577,4 +600,29 @@ async def get_patient_passport(
         "summary": summary_text,
         "history": history_data
     }
+
+# ==============================
+# 📄 CLINICAL PDF REPORT
+# ==============================
+@app.post("/generate-report")
+async def generate_report(req: ReportRequest):
+    try:
+        # Generate the PDF using model_dump() instead of deprecated dict()
+        pdf_bytes = generate_clinical_pdf(
+            user_info=req.user_info.model_dump(),
+            enzyme_profile=req.enzyme_profile,
+            drug_results=[d.model_dump() for d in req.drug_results]
+        )
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": "attachment; filename=Genetic_Guardrail_Report.pdf"}
+        )
+    except Exception as e:
+        logger.error(f"Failed to generate clinical PDF report: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to generate report")
+
+# ==============================
+# ENTRY POINT
+# ==============================
 

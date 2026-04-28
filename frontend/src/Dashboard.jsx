@@ -39,10 +39,18 @@ export default function Dashboard({ user }) {
   const [analysisResult, setAnalysisResult] = useState(null);
   const [view, setView] = useState('dashboard'); // 'dashboard', 'analyzing', 'results'
   const [patientSummary, setPatientSummary] = useState(null);
+  const [enzymeProfile, setEnzymeProfile] = useState({});
   const [showPassport, setShowPassport] = useState(false);
   const [searchHistory, setSearchHistory] = useState([]);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef(null);
+
+  const [toast, setToast] = useState(null);
+
+  const showToast = (message) => {
+    setToast(message);
+    setTimeout(() => setToast(null), 3000);
+  };
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -107,6 +115,9 @@ export default function Dashboard({ user }) {
     try {
       const res = await axios.get(`${API_BASE}/patient/summary`);
       setPatientSummary(res.data.summary);
+      if (res.data.enzyme_profile) {
+        setEnzymeProfile(res.data.enzyme_profile);
+      }
     } catch (err) {
       console.error('Failed to fetch patient summary', err);
     }
@@ -225,6 +236,44 @@ export default function Dashboard({ user }) {
     }
   };
 
+  const handleDownloadPDF = async () => {
+    try {
+      const reportPayload = {
+        user_info: {
+          name: user?.name || "Unknown Patient",
+          email: user?.email || "N/A",
+          analysis_id: analysisResult?.user_id || "N/A"
+        },
+        enzyme_profile: enzymeProfile,
+        drug_results: analysisResult.drug_results.map(d => ({
+          drug_name: d.drug,
+          risk_level: d.risk_level,
+          action: d.action,
+          clinical_note: d.clinical_note,
+          alternative: d.alternative,
+          toxicity_level: d.toxicity_score || 0
+        }))
+      };
+
+      const res = await axios.post(`${API_BASE}/generate-report`, reportPayload, {
+        responseType: 'blob'
+      });
+
+      const blob = new Blob([res.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'Genetic_Guardrail_Report.pdf');
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Failed to generate PDF', err);
+      showToast("Failed to generate report");
+    }
+  };
+
   const handleLogout = () => {
     // Basic logout logic: redirect to login or clear cookie
     // Since we don't have a specific logout route on backend, we'll just reload and let auth fail
@@ -234,6 +283,24 @@ export default function Dashboard({ user }) {
 
   return (
     <div className="flex h-screen overflow-hidden">
+      {/* Toast Notification */}
+      <AnimatePresence>
+        {toast && (
+          <motion.div 
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="absolute top-4 right-4 z-50 bg-slate-800 border border-risk-red text-risk-red px-4 py-3 rounded-md shadow-lg flex items-center gap-3"
+          >
+            <AlertTriangle className="w-5 h-5" />
+            <span className="font-medium text-sm">{toast}</span>
+            <button onClick={() => setToast(null)} className="ml-2 hover:text-white">
+              <X className="w-4 h-4" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Sidebar */}
       <div className="w-72 bg-slate-950 border-r border-slate-800 flex flex-col z-20">
         {/* User Profile */}
@@ -623,7 +690,11 @@ export default function Dashboard({ user }) {
                 animate={{ opacity: 1, y: 0 }}
                 className="max-w-5xl mx-auto"
               >
-                <AnalysisResults result={analysisResult} onReset={() => setView('dashboard')} />
+                <AnalysisResults 
+                  result={analysisResult} 
+                  onReset={() => setView('dashboard')} 
+                  onDownloadPDF={handleDownloadPDF}
+                />
               </motion.div>
             )}
           </AnimatePresence>
@@ -685,7 +756,7 @@ export default function Dashboard({ user }) {
 // -----------------------------------------------------------------------------
 // VIEW C: ANALYSIS RESULTS (Multi-Drug)
 // -----------------------------------------------------------------------------
-function AnalysisResults({ result, onReset }) {
+function AnalysisResults({ result, onReset, onDownloadPDF }) {
   if (!result || !result.drug_results) return null;
 
   return (
@@ -703,12 +774,21 @@ function AnalysisResults({ result, onReset }) {
             DRUGS_ANALYZED: {result.drug_results.length}
           </p>
         </div>
-        <button 
-          onClick={onReset}
-          className="px-5 py-2.5 bg-slate-900 border border-slate-700 hover:bg-slate-800 hover:border-slate-600 rounded-sm text-sm font-medium transition-colors text-slate-300 shrink-0"
-        >
-          Close Report & Start New
-        </button>
+        <div className="flex flex-col sm:flex-row gap-3 shrink-0">
+          <button 
+            onClick={onDownloadPDF}
+            className="px-5 py-2.5 bg-medical-blue hover:bg-blue-600 border border-blue-500 rounded-sm text-sm font-medium transition-colors text-white flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(59,130,246,0.2)]"
+          >
+            <Download className="w-4 h-4" />
+            Download Clinical PDF
+          </button>
+          <button 
+            onClick={onReset}
+            className="px-5 py-2.5 bg-slate-900 border border-slate-700 hover:bg-slate-800 hover:border-slate-600 rounded-sm text-sm font-medium transition-colors text-slate-300"
+          >
+            Close Report & Start New
+          </button>
+        </div>
       </div>
 
       {/* Drug Cards */}
