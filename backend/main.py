@@ -116,6 +116,10 @@ def get_current_user(request: Request, db: Session = Depends(get_db)):
 # ==============================
 # 📦 RESPONSE MODEL (Phase 3 UI Prep)
 # ==============================
+class PrescriptionRequest(BaseModel):
+    user_id: str
+    drug_names: List[str]
+
 class UIMetrics(BaseModel):
     risk_gauge: int # 0-100
     metabolic_radar: dict # Radar chart data points
@@ -123,19 +127,18 @@ class UIMetrics(BaseModel):
     enzyme_profile: dict = {} # Added for dynamic UI display
 
 class ClinicalResponse(BaseModel):
-    drug_name: str
+    drug: str
     action: str
     risk_level: str
     clinical_note: str
     alternative: Optional[str] = None
     confidence: float
     toxicity_score: float = 0.0
+    radar_data: dict
 
 class MultiDrugResponse(BaseModel):
-    toxicity_score: float
-    radar_data: dict
+    user_id: str
     drug_results: List[ClinicalResponse]
-    ui_metrics: Optional[UIMetrics] = None
 
 class VCFFileResponse(BaseModel):
     id: int
@@ -153,16 +156,16 @@ async def global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(
         status_code=200,
         content={
-            "toxicity_score": 0.0,
-            "radar_data": {"Metabolism": 0.0, "Binding": 0.0, "Toxicity": 0.0, "Confidence": 0.0},
+            "user_id": "Unknown",
             "drug_results": [{
-                "drug_name": "Unknown",
+                "drug": "Unknown",
                 "action": "Manual Review Required",
                 "risk_level": "Unknown",
                 "clinical_note": "A technical error occurred during genomic analysis. Please consult a pharmacist.",
                 "alternative": "Manual Pharmacogenomic Review",
                 "confidence": 0.0,
-                "toxicity_score": 0.0
+                "toxicity_score": 0.0,
+                "radar_data": {"Metabolism": 0.0, "Binding": 0.0, "Toxicity": 0.0, "Confidence": 0.0}
             }]
         }
     )
@@ -250,49 +253,22 @@ async def get_me(user: User = Depends(get_current_user)):
 # ==============================
 @app.post("/check-prescription", response_model=MultiDrugResponse)
 async def check_prescription(
-    request: Request,
-    drug_name: Optional[str] = Form(None),
-    drug_names: List[str] = Form(default=[]),
-    file: Optional[UploadFile] = File(None),
-    file_id: Optional[int] = Form(None),
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user)
+    request_data: PrescriptionRequest,
+    db: Session = Depends(get_db)
 ):
     # Generate unique Request ID
     request_id = str(uuid.uuid4())[:8]
 
-    # Combine drug_name and drug_names
-    drugs_to_check = list(drug_names)
-    if drug_name and drug_name.strip() != "":
-        # Handle comma-separated list in a single string just in case
-        if "," in drug_name:
-            drugs_to_check.extend([d.strip() for d in drug_name.split(",")])
-        else:
-            drugs_to_check.append(drug_name.strip())
-
-    drugs_to_check = list(set(drugs_to_check)) # Remove duplicates
+    drugs_to_check = list(set([d.strip() for d in request_data.drug_names if d.strip()]))
 
     # ---------------------------
     # 🧾 Validate Input
     # ---------------------------
     if not drugs_to_check:
-        return MultiDrugResponse(
-            toxicity_score=0.0,
-            radar_data={"Metabolism": 0.0, "Binding": 0.0, "Toxicity": 0.0, "Confidence": 0.0},
-            drug_results=[ClinicalResponse(
-                drug_name="Unknown",
-                action="Error",
-                risk_level="Unknown",
-                clinical_note="No drug names provided.",
-                alternative=None,
-                confidence=0.0,
-                toxicity_score=0.0
-            )]
-        )
+        raise HTTPException(status_code=400, detail="drug_names cannot be empty")
 
-    logger.info(f"[{request_id}] Incoming request | Drugs: {drugs_to_check}")
+    logger.info(f"[{request_id}] Incoming request for user {request_data.user_id} | Drugs: {drugs_to_check}")
 
-    temp_path = None
     try:
         # ✅ Test 6: Simulated failure for testing
         if ENABLE_FORCE_FAILURE:
@@ -300,7 +276,7 @@ async def check_prescription(
             raise Exception("Simulated System Crash")
 
         # ---------------------------
-        # 🧬 Agent 1: Parser
+        # 🧬 Agent 1: Parser (using latest VCF if available)
         # ---------------------------
         enzyme_profile = {
             "CYP2D6": "Insufficient Data",
@@ -310,120 +286,111 @@ async def check_prescription(
             "SLCO1B1": "Insufficient Data"
         }
 
-        if file and file.filename:
-            # Secure Temp File Handling & Storage persistence
-            try:
-                user_storage_dir = os.path.join(STORAGE_DIR, str(user.id))
-                os.makedirs(user_storage_dir, exist_ok=True)
-                
-                file_path = os.path.join(user_storage_dir, file.filename)
-                
-                with open(file_path, "wb") as f:
-                    while True:
-                        chunk = await file.read(1024 * 1024) # 1MB chunks
-                        if not chunk:
-                            break
-                        f.write(chunk)
-                
-                temp_path = file_path
-                
-                # Save to Database
-                new_vcf = VCFFile(
-                    user_id=user.id,
-                    filename=file.filename,
-                    file_path=temp_path
-                )
-                db.add(new_vcf)
-                db.commit()
-                db.refresh(new_vcf)
-                logger.info(f"[{request_id}] File saved securely to {temp_path} and tracked in DB for user {user.email}.")
-                
-                logger.info(f"[{request_id}] Beginning scan of {temp_path}...")
-                enzyme_profile = await extract_enzyme_profile(temp_path)
-            except Exception as e:
-                logger.error(f"[{request_id}] Agent 1 Failure: {e}")
-        elif file_id:
-            # Reuse old file
-            try:
-                vcf_record = db.query(VCFFile).filter(VCFFile.id == file_id).first()
-                if not vcf_record or not os.path.exists(vcf_record.file_path):
-                    raise ValueError(f"File ID {file_id} not found or file missing.")
-                
-                temp_path = vcf_record.file_path
-                logger.info(f"[{request_id}] Reusing file from storage: {temp_path}. Beginning scan...")
-                enzyme_profile = await extract_enzyme_profile(temp_path)
-            except Exception as e:
-                logger.error(f"[{request_id}] Agent 1 Failure on historical file: {e}")
-        else:
-            logger.info(f"[{request_id}] No VCF provided. Using default Insufficient Data profile.")
+        try:
+            # Attempt to find user by email or string ID
+            user = db.query(User).filter((User.email == request_data.user_id) | (User.id == request_data.user_id)).first()
+            if user:
+                latest_vcf = db.query(VCFFile).filter(VCFFile.user_id == user.id).order_by(VCFFile.upload_date.desc()).first()
+                if latest_vcf and os.path.exists(latest_vcf.file_path):
+                    logger.info(f"[{request_id}] Found VCF for user. Beginning scan...")
+                    enzyme_profile = await extract_enzyme_profile(latest_vcf.file_path)
+                else:
+                    logger.info(f"[{request_id}] No VCF found for user {request_data.user_id}. Using default Insufficient Data profile.")
+            else:
+                logger.info(f"[{request_id}] User {request_data.user_id} not found in DB. Using default Insufficient Data profile.")
+        except Exception as e:
+            logger.error(f"[{request_id}] Agent 1 Failure: {e}")
 
         # ---------------------------
         # 🧪 Agent 2 & 📝 Agent 3: Parallel Processing
         # ---------------------------
         async def process_drug(drug: str):
-            risk_data = await calculate_risk(enzyme_profile, drug)
-            
-            drug_key = drug.title()
-            primary_gene = {
-                "Codeine": "CYP2D6",
-                "Clopidogrel": "CYP2C19",
-                "Warfarin": "CYP2C9",
-                "Simvastatin": "CYP3A4"
-            }.get(drug_key, "pharmacogenomic")
-            
-            minimal_findings = {primary_gene: enzyme_profile.get(primary_gene, "Unknown")}
-
-            recommendation = await generate_clinical_recommendation(
-                findings=minimal_findings,
-                risk_level=risk_data["risk_level"],
-                drug_name=drug,
-                confidence=risk_data["confidence"],
-                insufficient_data=risk_data.get("insufficient_data", False),
-                request_id=request_id
-            )
-            
-            toxicity = risk_data.get("toxicity_level", 0.0)
-            recommendation["drug_name"] = drug
-            recommendation["toxicity_score"] = toxicity
-            
-            # Save history
             try:
-                history_record = DrugCheckHistory(
-                    user_id=user.id,
-                    drug_name=drug,
-                    risk_level=risk_data["risk_level"],
-                    toxicity_score=toxicity
-                )
-                db.add(history_record)
-            except Exception as e:
-                logger.error(f"[{request_id}] Failed to save drug history: {e}")
+                risk_data = await calculate_risk(enzyme_profile, drug)
                 
-            return ClinicalResponse(**recommendation)
+                drug_key = drug.title()
+                primary_gene = {
+                    "Codeine": "CYP2D6",
+                    "Clopidogrel": "CYP2C19",
+                    "Warfarin": "CYP2C9",
+                    "Simvastatin": "CYP3A4"
+                }.get(drug_key, "pharmacogenomic")
+                
+                minimal_findings = {primary_gene: enzyme_profile.get(primary_gene, "Unknown")}
+
+                recommendation = await generate_clinical_recommendation(
+                    findings=minimal_findings,
+                    risk_level=risk_data["risk_level"],
+                    drug_name=drug,
+                    confidence=risk_data["confidence"],
+                    insufficient_data=risk_data.get("insufficient_data", False),
+                    request_id=request_id
+                )
+                
+                toxicity = risk_data.get("toxicity_level", 0.0)
+                if risk_data.get("risk_level") == "Unknown" and toxicity == 0.0:
+                    toxicity = 0.1 # Default low score for unknown drugs
+                
+                # Save history if user exists
+                try:
+                    if 'user' in locals() and user:
+                        history_record = DrugCheckHistory(
+                            user_id=user.id,
+                            drug_name=drug,
+                            risk_level=risk_data["risk_level"],
+                            toxicity_score=toxicity
+                        )
+                        db.add(history_record)
+                except Exception as e:
+                    logger.error(f"[{request_id}] Failed to save drug history: {e}")
+
+                return ClinicalResponse(
+                    drug=drug,
+                    action=recommendation.get("action", "Unknown"),
+                    risk_level=risk_data.get("risk_level", "Unknown"),
+                    clinical_note=recommendation.get("clinical_note", "No note available."),
+                    alternative=recommendation.get("alternative"),
+                    confidence=risk_data.get("confidence", 0.0),
+                    toxicity_score=toxicity,
+                    radar_data={
+                        "Metabolism": 0.2 if risk_data.get("risk_level") == "High" else 0.8,
+                        "Binding": 0.9 if toxicity > 0.5 else 0.4,
+                        "Toxicity": toxicity,
+                        "Confidence": risk_data.get("confidence", 0.0)
+                    }
+                )
+            except Exception as e:
+                logger.error(f"[{request_id}] Error processing drug {drug}: {e}")
+                # Return a safe fallback for the failed drug so others can continue
+                return ClinicalResponse(
+                    drug=drug,
+                    action="Error",
+                    risk_level="Unknown",
+                    clinical_note=f"Analysis failed for {drug}.",
+                    alternative=None,
+                    confidence=0.0,
+                    toxicity_score=0.1,
+                    radar_data={
+                        "Metabolism": 0.0,
+                        "Binding": 0.0,
+                        "Toxicity": 0.1,
+                        "Confidence": 0.0
+                    }
+                )
 
         results = await asyncio.gather(*(process_drug(d) for d in drugs_to_check))
         
         # Commit all history records
-        db.commit()
-
-        # Calculate overall toxicity score (e.g., max of individual toxicities)
-        overall_toxicity = max([res.toxicity_score for res in results]) if results else 0.0
+        try:
+            db.commit()
+        except Exception as e:
+            logger.error(f"[{request_id}] Error committing history records: {e}")
+            db.rollback()
 
         # Prepare MultiDrugResponse
         multi_response = MultiDrugResponse(
-            toxicity_score=overall_toxicity,
-            radar_data={
-                "Metabolism": 0.8, # Mock values for Phase 1
-                "Binding": 0.7,
-                "Toxicity": overall_toxicity,
-                "Confidence": sum([res.confidence for res in results]) / len(results) if results else 0.0
-            },
-            drug_results=list(results),
-            ui_metrics=UIMetrics(
-                risk_gauge=int(overall_toxicity * 100),
-                metabolic_radar={"CYP2D6": 0.8, "CYP2C19": 0.2, "CYP3A4": 1.0},
-                clinical_timeline=[{"date": "2024-05-01", "event": "Multi-drug analysis complete"}],
-                enzyme_profile=enzyme_profile
-            )
+            user_id=request_data.user_id,
+            drug_results=list(results)
         )
 
         return multi_response
