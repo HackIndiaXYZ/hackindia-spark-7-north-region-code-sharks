@@ -31,7 +31,7 @@ const SUPPORTED_DRUGS = [
   "Ibuprofen", "Aspirin", "Metformin", "Tamoxifen", "Oxycodone"
 ];
 
-const IP = "10.113.23.97"; // YOUR CURRENT NETWORK IP
+const MY_LAPTOP_IP = "10.113.23.97"; // FIND YOUR CURRENT IP (e.g. 10.113.23.97)
 
 export default function Dashboard({ user }) {
   const [files, setFiles] = useState([]);
@@ -43,7 +43,8 @@ export default function Dashboard({ user }) {
   const [view, setView] = useState('dashboard'); // 'dashboard', 'analyzing', 'results'
   const [patientSummary, setPatientSummary] = useState(null);
   const [enzymeProfile, setEnzymeProfile] = useState({});
-  const [showPassport, setShowPassport] = useState(false);
+  const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
+  const [isFetchingSummary, setIsFetchingSummary] = useState(true);
   const [passportPayload, setPassportPayload] = useState(null);
   const [searchHistory, setSearchHistory] = useState([]);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -130,6 +131,7 @@ export default function Dashboard({ user }) {
   };
 
   const fetchPatientSummary = async () => {
+    setIsFetchingSummary(true);
     try {
       const res = await axios.get(`${API_BASE}/patient/summary`);
       setPatientSummary(res.data.summary);
@@ -138,6 +140,8 @@ export default function Dashboard({ user }) {
       }
     } catch (err) {
       console.error('Failed to fetch patient summary', err);
+    } finally {
+      setIsFetchingSummary(false);
     }
   };
 
@@ -251,6 +255,31 @@ export default function Dashboard({ user }) {
         }))
       });
       setView('results');
+    }
+  };
+
+  const downloadMasterReport = async () => {
+    setIsGeneratingSummary(true);
+    try {
+      const res = await axios.post(`${API_BASE}/generate-full-summary`, {}, {
+        responseType: 'blob',
+        withCredentials: true
+      });
+      
+      const blob = new Blob([res.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'My_Genetic_Blueprint.pdf');
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Failed to generate full summary', err);
+      showToast("Failed to generate comprehensive report.");
+    } finally {
+      setIsGeneratingSummary(false);
     }
   };
 
@@ -391,17 +420,31 @@ export default function Dashboard({ user }) {
               ))}
             </div>
           )}
+          
+          {/* Master Blueprint Button */}
+          <div className="mt-4">
+            <button
+              onClick={downloadMasterReport}
+              disabled={isGeneratingSummary || isFetchingSummary || typeof patientSummary === 'string'}
+              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-lg flex items-center justify-center gap-2 transition-all disabled:opacity-70 disabled:cursor-not-allowed"
+            >
+              {isGeneratingSummary || isFetchingSummary ? (
+                <>
+                  <Activity className="w-4 h-4 animate-pulse" />
+                  {isFetchingSummary ? "Preparing Summary..." : "Generating..."}
+                </>
+              ) : (
+                <>
+                  <FileText className="w-4 h-4" />
+                  Download Master Blueprint
+                </>
+              )}
+            </button>
+          </div>
         </div>
 
         {/* New Diagnostic Button */}
         <div className="p-4 border-t border-slate-800 bg-slate-950 space-y-3">
-          <button 
-            onClick={() => setShowPassport(true)}
-            className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-sm font-medium border border-slate-700 rounded-sm transition-colors text-slate-300 flex items-center justify-center gap-2"
-          >
-            <QrCode className="w-4 h-4 text-medical-blue" />
-            GENOMIC PASSPORT
-          </button>
           <button 
             onClick={() => { setView('dashboard'); setAnalysisResult(null); setSelectedDrugs([]); }}
             className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-sm font-medium border border-slate-700 rounded-sm transition-colors text-slate-300 flex items-center justify-center gap-2"
@@ -452,98 +495,68 @@ export default function Dashboard({ user }) {
                         <Database className="w-8 h-8 text-medical-blue" />
                         Your DNA Blueprint
                       </h2>
-                      
-                      {/* Toggle Switch */}
-                      <div className="flex items-center bg-slate-900 border border-slate-700 rounded-full p-1 shadow-inner">
-                        <button
-                          onClick={() => setBlueprintView('patient')}
-                          className={`px-4 py-1.5 rounded-full text-xs font-semibold uppercase tracking-wider transition-all duration-300 ${
-                            blueprintView === 'patient'
-                              ? 'bg-gradient-to-r from-orange-500 to-rose-500 text-white shadow-md'
-                              : 'text-slate-400 hover:text-white'
-                          }`}
-                        >
-                          View as Patient
-                        </button>
-                        <button
-                          onClick={() => setBlueprintView('clinician')}
-                          className={`px-4 py-1.5 rounded-full text-xs font-semibold uppercase tracking-wider transition-all duration-300 ${
-                            blueprintView === 'clinician'
-                              ? 'bg-gradient-to-r from-medical-blue to-indigo-600 text-white shadow-md'
-                              : 'text-slate-400 hover:text-white'
-                          }`}
-                        >
-                          View as Clinician
-                        </button>
-                      </div>
                     </div>
 
-                    <div className="bg-slate-950 p-6 border border-slate-800 rounded-xl shadow-sm relative overflow-hidden">
-                      <div className={`absolute top-0 left-0 w-1 h-full ${blueprintView === 'patient' ? 'bg-rose-500' : 'bg-medical-blue'}`}></div>
-                      
-                      {blueprintView === 'patient' ? (
-                        // Patient View - Warm Colors & Layperson Summary
-                        <div className="space-y-4">
-                          <h3 className="text-lg font-medium text-white flex items-center gap-2">
-                            <HeartPulse className="w-5 h-5 text-rose-500" />
-                            Patient-Friendly Genomic Overview
-                          </h3>
-                          <p className="text-slate-300 leading-relaxed bg-rose-500/5 border border-rose-500/20 p-4 rounded-lg">
-                            {patientSummary.layperson_summary || patientSummary.technical_narrative || (typeof patientSummary === 'string' ? patientSummary : "No summary available.")}
-                          </p>
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
-                            {Object.entries(enzymeProfile).slice(0, 4).map(([gene, status]) => (
-                              <div key={gene} className="bg-slate-900 border border-slate-800 p-4 rounded-lg text-center flex flex-col items-center justify-center gap-2">
-                                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${status.includes('Poor') ? 'bg-red-500/20 text-red-400' : status.includes('Rapid') ? 'bg-amber-500/20 text-amber-400' : 'bg-emerald-500/20 text-emerald-400'}`}>
-                                  <Activity className="w-5 h-5" />
-                                </div>
-                                <div>
-                                  <div className="text-xs text-slate-500">{gene}</div>
-                                  <div className="text-sm font-medium text-slate-200">{status}</div>
-                                </div>
+                    <div className="bg-slate-950 p-6 border border-slate-800 rounded-xl shadow-sm relative overflow-hidden space-y-6">
+                      {/* Professional Clinical Interpretation Box */}
+                      <div className="border border-blue-500/30 bg-blue-900/10 p-5 rounded-lg space-y-3">
+                        <h3 className="text-lg font-medium text-white flex items-center gap-2">
+                          <Microscope className="w-5 h-5 text-blue-400" />
+                          Professional Clinical Interpretation
+                        </h3>
+                        <p className="text-slate-300 leading-relaxed whitespace-pre-wrap font-mono text-sm">
+                          {patientSummary.technical_narrative || (typeof patientSummary === 'string' ? patientSummary : "No technical details available.")}
+                        </p>
+                      </div>
+
+                      {/* Patient-Friendly Genomic Overview Box */}
+                      <div className="border border-emerald-500/30 bg-emerald-900/10 p-5 rounded-lg space-y-3">
+                        <h3 className="text-lg font-medium text-white flex items-center gap-2">
+                          <HeartPulse className="w-5 h-5 text-emerald-400" />
+                          Patient-Friendly Genomic Overview
+                        </h3>
+                        <p className="text-slate-300 leading-relaxed whitespace-pre-wrap">
+                          {patientSummary.layperson_summary || (typeof patientSummary === 'string' ? patientSummary : "No summary available.")}
+                        </p>
+                      </div>
+
+                      <div className="mt-6">
+                        <h4 className="text-xs font-mono text-slate-500 uppercase tracking-widest mb-3">Detected Genomic Variants</h4>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                          {Object.entries(enzymeProfile).slice(0, 4).map(([gene, status]) => (
+                            <div key={gene} className="bg-slate-900 border border-slate-800 p-4 rounded-lg text-center flex flex-col items-center justify-center gap-2">
+                              <div className={`w-10 h-10 rounded-full flex items-center justify-center ${status.includes('Poor') ? 'bg-red-500/20 text-red-400' : status.includes('Rapid') ? 'bg-amber-500/20 text-amber-400' : 'bg-emerald-500/20 text-emerald-400'}`}>
+                                <Activity className="w-5 h-5" />
                               </div>
-                            ))}
-                          </div>
-                        </div>
-                      ) : (
-                        // Clinician View - Cold Colors & Technical Narrative & Raw Data
-                        <div className="space-y-4">
-                          <h3 className="text-lg font-medium text-white flex items-center gap-2">
-                            <Microscope className="w-5 h-5 text-medical-blue" />
-                            Professional Clinical Interpretation
-                          </h3>
-                          <p className="text-slate-300 leading-relaxed font-mono text-sm bg-medical-blue/5 border border-medical-blue/20 p-4 rounded-lg">
-                            {patientSummary.technical_narrative || (typeof patientSummary === 'string' ? patientSummary : "No technical details available.")}
-                          </p>
-                          
-                          <div className="mt-6">
-                            <h4 className="text-xs font-mono text-slate-500 uppercase tracking-widest mb-3">Detected Genomic Variants</h4>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                              {Object.entries(enzymeProfile).map(([gene, status]) => {
-                                // Simulate raw rsIDs, Star-Alleles, Binding Affinity for the UI
-                                const rsID = `rs${Math.floor(Math.random() * 10000000)}`;
-                                const starAllele = status.includes('Poor') ? '*4/*4' : status.includes('Intermediate') ? '*1/*4' : '*1/*1';
-                                const bindingAffinity = status.includes('Poor') ? '12%' : status.includes('Intermediate') ? '45%' : '98%';
-                                
-                                return (
-                                  <div key={gene} className="bg-slate-900 border border-slate-800 p-3 rounded-sm flex items-center justify-between">
-                                    <div>
-                                      <div className="text-sm font-bold text-white">{gene} <span className="text-medical-blue font-normal ml-2">{starAllele}</span></div>
-                                      <div className="text-xs font-mono text-slate-500 mt-1">Locus: {rsID}</div>
-                                    </div>
-                                    <div className="text-right">
-                                      <div className="text-xs text-slate-400 uppercase tracking-wider">Binding Affinity</div>
-                                      <div className={`text-lg font-mono font-medium ${status.includes('Poor') ? 'text-risk-red' : status.includes('Rapid') ? 'text-amber-500' : 'text-success-green'}`}>
-                                        {bindingAffinity}
-                                      </div>
-                                    </div>
-                                  </div>
-                                );
-                              })}
+                              <div>
+                                <div className="text-xs text-slate-500">{gene}</div>
+                                <div className="text-sm font-medium text-slate-200">{status}</div>
+                              </div>
                             </div>
-                          </div>
+                          ))}
                         </div>
-                      )}
+                      </div>
+                      
+                      {/* Download Full DNA Blueprint Button */}
+                      <div className="mt-8 flex justify-center">
+                        <button
+                          onClick={downloadMasterReport}
+                          disabled={isGeneratingSummary || isFetchingSummary || typeof patientSummary === 'string'}
+                          className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-6 rounded-lg shadow-lg flex items-center justify-center gap-3 transition-all disabled:opacity-70 disabled:cursor-not-allowed"
+                        >
+                          {isGeneratingSummary || isFetchingSummary ? (
+                            <>
+                              <Activity className="w-5 h-5 animate-pulse" />
+                              {isFetchingSummary ? "Preparing Report..." : "Generating Comprehensive Report..."}
+                            </>
+                          ) : (
+                            <>
+                              <FileText className="w-5 h-5" />
+                              Download Full DNA Blueprint
+                            </>
+                          )}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -807,54 +820,6 @@ export default function Dashboard({ user }) {
             )}
           </AnimatePresence>
 
-          {/* Genomic Passport Modal */}
-          <AnimatePresence>
-            {showPassport && (
-              <motion.div 
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4"
-              >
-                <motion.div 
-                  initial={{ scale: 0.95, opacity: 0, y: 20 }}
-                  animate={{ scale: 1, opacity: 1, y: 0 }}
-                  exit={{ scale: 0.95, opacity: 0, y: 20 }}
-                  className="bg-slate-900 border border-slate-700 rounded-sm shadow-2xl max-w-md w-full overflow-hidden"
-                >
-                  <div className="flex justify-between items-center p-4 border-b border-slate-800 bg-slate-950">
-                    <h3 className="font-semibold text-white flex items-center gap-2">
-                      <QrCode className="w-5 h-5 text-medical-blue" />
-                      Mobile Passport
-                    </h3>
-                    <button onClick={() => setShowPassport(false)} className="text-slate-400 hover:text-white transition-colors">
-                      <X className="w-5 h-5" />
-                    </button>
-                  </div>
-                  <div className="p-8 flex flex-col items-center">
-                    <div className="bg-white p-4 rounded-sm mb-6">
-                      <QRCodeCanvas 
-                        value={`http://${IP}:8000/passport/download/${user?.id}`}
-                        size={200}
-                        level="H"
-                        fgColor="#0f172a"
-                      />
-                    </div>
-                    <div className="w-full text-center mb-6">
-                      <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1">Encrypted Metabolic Fingerprint</p>
-                      <p className="text-sm text-slate-300 leading-relaxed">
-                        Scan with your phone to instantly download your Genomic Blueprint PDF.
-                      </p>
-                    </div>
-                    <button className="w-full py-3 bg-medical-blue hover:bg-blue-600 text-white font-medium rounded-sm transition-all flex items-center justify-center gap-2">
-                      <Download className="w-4 h-4" />
-                      Download for Mobile Wallet
-                    </button>
-                  </div>
-                </motion.div>
-              </motion.div>
-            )}
-          </AnimatePresence>
         </main>
       </div>
     </div>

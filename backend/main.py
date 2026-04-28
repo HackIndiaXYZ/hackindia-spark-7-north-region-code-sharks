@@ -53,8 +53,23 @@ except ImportError as e:
 # -----------------------------
 # Database & Auth Integrations
 # -----------------------------
-from database import get_db, User, VCFFile, DrugCheckHistory
+from database import get_db, User, VCFFile, DrugCheckHistory, engine
+from sqlalchemy import text
 from authlib.integrations.starlette_client import OAuth
+
+def migrate_db():
+    with engine.connect() as conn:
+        # Check if tech_summary exists, if not, add it
+        try:
+            conn.execute(text("ALTER TABLE vcf_files ADD COLUMN tech_summary TEXT"))
+            conn.execute(text("ALTER TABLE vcf_files ADD COLUMN lay_summary TEXT"))
+            conn.commit()
+            print("✅ Database migration successful: Columns added.")
+        except Exception as e:
+            # If columns already exist, this will fail silently which is fine
+            print(f"ℹ️ Migration note: {e}")
+
+migrate_db()
 
 
 # ✅ Test 6: Global SafetyNet Variable
@@ -547,14 +562,32 @@ async def get_patient_summary(
         # Agent 1 parses entire VCF for known pharmacogenes
         enzyme_profile = await extract_enzyme_profile(latest_vcf.file_path)
         
-        logger.info(f"LOG: Sending Profile to Agent 3: {json.dumps(enzyme_profile)}")
+        # Check Database Cache first
+        if latest_vcf.tech_summary and latest_vcf.lay_summary:
+            logger.info("LOG: Returning Master AI Summary from Database Cache")
+            master_summary = {
+                "technical_narrative": latest_vcf.tech_summary,
+                "layperson_summary": latest_vcf.lay_summary
+            }
+            return {"summary": master_summary, "enzyme_profile": enzyme_profile}
+            
+        logger.info(f"LOG: Generating new Master AI Summary for Profile: {json.dumps(enzyme_profile)}")
         
         # Agent 3 generates "Master AI Summary"
-        master_summary = await get_dna_translation(enzyme_profile)
+        from agents.agent3 import get_dna_translation_hardened
+        master_summary = await get_dna_translation_hardened(enzyme_profile)
+        
+        # Persist the generated summary to the database
+        if "technical_narrative" in master_summary and "layperson_summary" in master_summary:
+            latest_vcf.tech_summary = master_summary["technical_narrative"]
+            latest_vcf.lay_summary = master_summary["layperson_summary"]
+            db.commit()
+            logger.info("LOG: Master AI Summary successfully saved to Database")
         
         return {"summary": master_summary, "enzyme_profile": enzyme_profile}
     except Exception as e:
         logger.error(f"Failed to generate patient summary: {e}")
+        db.rollback()
         return {"summary": {"technical_narrative": "Error generating summary.", "layperson_summary": "Error generating summary. Please try again later."}, "enzyme_profile": {}}
 
 @app.get("/patient/history")
@@ -653,52 +686,145 @@ async def generate_report(req: ReportRequest):
         logger.error(f"Failed to generate clinical PDF report: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to generate report")
 
-@app.get("/passport/download/{user_id}")
-async def download_passport_pdf(user_id: int, db: Session = Depends(get_db)):
-    if not PDF_SUPPORT:
-        raise HTTPException(status_code=501, detail="PDF generation is currently unavailable due to missing dependencies.")
-        
-    # 1. Get the latest VCF file for this user from the database
-    vcf_record = db.query(VCFFile).filter(VCFFile.user_id == user_id).order_by(VCFFile.id.desc()).first()
-    if not vcf_record:
-        return {"error": "No VCF file found for this user."}
-
-    # 2. RUN AGENT 1 (Parse the physical file)
-    vcf_path = os.path.abspath(vcf_record.file_path)
-    enzyme_profile = {}
-    if os.path.exists(vcf_path):
-        enzyme_profile = await extract_enzyme_profile(vcf_path)
-
-    # 3. RUN AGENT 3 (Generate the DNA Blueprint)
-    # Force this to be AWAITED properly
-    translation = await get_dna_translation_hardened(enzyme_profile)
-
-    # 4. FETCH USER INFO
-    user_record = db.query(User).filter(User.id == user_id).first()
-    if not user_record:
-        return {"error": "Patient not found."}
-
-    # 5. GENERATE PDF (Pass ALL data directly)
+# REMOVE any @login_required or get_current_user dependencies here 
+@app.get("/passport/download/{user_id}") 
+async def public_passport_download(user_id: int, db: Session = Depends(get_db)): 
+    # 1. Force retrieval of data from DB 
+    vcf_record = db.query(VCFFile).filter(VCFFile.user_id == user_id).order_by(VCFFile.id.desc()).first() 
+    user_record = db.query(User).filter(User.id == user_id).first() 
+     
+    if not vcf_record or not user_record: 
+        return {"error": "User or VCF not found"} 
+ 
+    # 2. Synchronous Pipeline (Re-run analysis for the PDF) 
+    from agents.agent1 import parse_vcf_line_by_line 
+    from agents.agent3 import get_dna_translation_hardened 
+    from report_generator import generate_clinical_pdf 
+ 
+    # Parse and Translate fresh to ensure data exists 
+    profile = parse_vcf_line_by_line(vcf_record.file_path) 
+    translation = await get_dna_translation_hardened(profile) 
+ 
+    # 3. Generate PDF 
     user_info = {
         "user_id": str(user_record.id),
         "name": user_record.name,
         "email": user_record.email
     }
     
-    pdf_bytes = generate_clinical_pdf(
-        user_info=user_info,
-        enzyme_profile=enzyme_profile,
+    pdf_bytes = generate_clinical_pdf( 
+        user_info=user_info, 
+        enzyme_profile=profile, 
         drug_results=[],
-        tech_note=translation.get("technical_narrative", ""),
-        lay_note=translation.get("layperson_summary", "")
-    )
-    
-    # Save bytes to a physical file so FileResponse can serve it
-    pdf_path = f"DNA_Blueprint_{user_id}.pdf"
+        tech_note=translation.get("technical_narrative", "Manual review required"), 
+        lay_note=translation.get("layperson_summary", "Simplified summary unavailable") 
+    ) 
+ 
+    # 4. Stream Response with ABSOLUTE HEADERS 
+    pdf_path = f"Genomic_Blueprint_{user_id}.pdf"
     with open(pdf_path, "wb") as f:
         f.write(pdf_bytes)
         
-    return FileResponse(pdf_path, media_type='application/pdf', filename=f"DNA_Blueprint_{user_id}.pdf")
+    return FileResponse( 
+        pdf_path,  
+        media_type='application/pdf',  
+        filename=f"Genomic_Blueprint_{user_id}.pdf", 
+        headers={"Content-Disposition": f"attachment; filename=Genomic_Blueprint_{user_id}.pdf"} 
+    ) 
+
+# ==============================
+# 11. POST GENERATE FULL SUMMARY
+# ==============================
+@app.post("/generate-full-summary")
+async def generate_full_summary(request: Request, db: Session = Depends(get_db)):
+    try:
+        user_id = request.session.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
+        # 1. Fetch latest VCF
+        vcf_record = db.query(VCFFile).filter(VCFFile.user_id == user_id).order_by(VCFFile.id.desc()).first()
+        if not vcf_record:
+            raise HTTPException(status_code=404, detail="No genomic data found")
+
+        # 2. Parse Profile (We still need the profile for the PDF display)
+        from agents.agent1 import parse_vcf_line_by_line
+        
+        vcf_path = os.path.abspath(vcf_record.file_path)
+        profile = parse_vcf_line_by_line(vcf_path)
+        
+        # 3. Read Only from Database (Smart Persistence)
+        tech_note = vcf_record.tech_summary
+        lay_note = vcf_record.lay_summary
+        
+        # Enforce read-only from DB (Auto-generate if missing)
+        if not tech_note or not lay_note:
+            logger.warning("Database summaries missing during download. Auto-generating now.")
+            from agents.agent3 import get_dna_translation_hardened
+            master_summary = await get_dna_translation_hardened(profile)
+            
+            tech_note = master_summary.get("technical_narrative")
+            lay_note = master_summary.get("layperson_summary")
+            
+            # Save it to DB
+            vcf_record.tech_summary = tech_note
+            vcf_record.lay_summary = lay_note
+            db.commit()
+            
+        user_record = db.query(User).filter(User.id == user_id).first()
+
+        # 4. Generate PDF
+        user_info = {
+            "user_id": str(user_record.id),
+            "name": user_record.name,
+            "email": user_record.email
+        }
+        
+        from report_generator import generate_clinical_pdf
+        pdf_bytes = generate_clinical_pdf(
+            user_info=user_info,
+            enzyme_profile=profile,
+            drug_results=[],
+            tech_note=tech_note,
+            lay_note=lay_note
+        )
+        
+        # Generate unique PDF filename
+        unique_id = uuid.uuid4().hex[:8]
+        pdf_path = f"My_Genetic_Blueprint_{user_id}_{unique_id}.pdf"
+        with open(pdf_path, "wb") as f:
+            f.write(pdf_bytes)
+            
+        return FileResponse(
+            pdf_path,
+            media_type='application/pdf',
+            filename="My_Genetic_Blueprint.pdf"
+        )
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"CRITICAL ERROR in generate_full_summary: {e}", exc_info=True)
+        # Error Handling: Return a System Maintenance Report if everything fails
+        from report_generator import generate_clinical_pdf
+        user_id = request.session.get("user_id", "unknown")
+        
+        pdf_bytes = generate_clinical_pdf(
+            user_info={"user_id": str(user_id), "name": "Patient", "email": ""},
+            enzyme_profile={},
+            drug_results=[],
+            tech_note="System Maintenance Report: The AI interpretation engine is currently undergoing maintenance or experiencing rate limits. Please try downloading your report again later.",
+            lay_note="We are currently performing system maintenance. Your genomic data is safe, but the detailed interpretation is temporarily unavailable. Please try again shortly."
+        )
+        
+        pdf_path = f"System_Maintenance_Report_{user_id}.pdf"
+        with open(pdf_path, "wb") as f:
+            f.write(pdf_bytes)
+            
+        return FileResponse(
+            pdf_path,
+            media_type='application/pdf',
+            filename="System_Maintenance_Report.pdf"
+        )
 
 # ==============================
 # ENTRY POINT

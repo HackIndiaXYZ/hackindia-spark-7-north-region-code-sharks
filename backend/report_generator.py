@@ -4,8 +4,49 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, Flowable
 from reportlab.graphics.shapes import Drawing, Rect
+
+class BoxedParagraph(Flowable):
+    def __init__(self, title, text, title_style, text_style, border_color, bg_color, width=6.5*inch):
+        Flowable.__init__(self)
+        self.width = width
+        # Ensure newlines are preserved in the text by using <br/> tags
+        text = text.replace('\n', '<br/>')
+        self.title_p = Paragraph(title, title_style)
+        self.text_p = Paragraph(text, text_style)
+        self.border_color = colors.HexColor(border_color)
+        self.bg_color = colors.HexColor(bg_color)
+        self.padding = 12
+
+    def wrap(self, availWidth, availHeight):
+        self.title_w, self.title_h = self.title_p.wrap(self.width - 2 * self.padding, availHeight)
+        self.text_w, self.text_h = self.text_p.wrap(self.width - 2 * self.padding, availHeight)
+        self.height = self.title_h + self.text_h + 3 * self.padding
+        return self.width, self.height
+
+    def split(self, availWidth, availHeight):
+        if availHeight < self.height:
+            return []
+        return [self]
+
+    def draw(self):
+        self.canv.saveState()
+        # Draw background for title area
+        self.canv.setFillColor(self.bg_color)
+        self.canv.rect(0, self.height - self.title_h - 2 * self.padding, self.width, self.title_h + 2 * self.padding, fill=1, stroke=0)
+        
+        # Draw border
+        self.canv.setStrokeColor(self.border_color)
+        self.canv.setLineWidth(1.5)
+        self.canv.rect(0, 0, self.width, self.height, fill=0, stroke=1)
+        
+        # Draw Title
+        self.title_p.drawOn(self.canv, self.padding, self.height - self.title_h - self.padding)
+        
+        # Draw Content
+        self.text_p.drawOn(self.canv, self.padding, self.padding)
+        self.canv.restoreState()
 
 def generate_clinical_pdf(user_info: dict, enzyme_profile: dict, drug_results: list, tech_note: str = None, lay_note: str = None) -> bytes:
     """
@@ -92,7 +133,6 @@ def generate_clinical_pdf(user_info: dict, enzyme_profile: dict, drug_results: l
     Elements.append(Spacer(1, 0.2 * inch))
     
     # --- 3. GENOMIC METABOLIC PROFILE ---
-    Elements.append(PageBreak())
     Elements.append(Paragraph("GENOMIC DNA BLUEPRINT", heading_style))
     Elements.append(Spacer(1, 0.2 * inch))
 
@@ -116,15 +156,16 @@ def generate_clinical_pdf(user_info: dict, enzyme_profile: dict, drug_results: l
         Elements.append(Paragraph("No genomic profile data available.", normal_style))
         
     Elements.append(Spacer(1, 0.2 * inch))
+    Elements.append(PageBreak())
 
     # --- 3.5 DNA BLUEPRINT (AI NARRATIVES) ---
-    safe_fallback_technical = "CYP450 Analysis indicates standard metabolic function across key pathways. Baseline precautions apply."
-    safe_fallback_layperson = "Your DNA shows you process most standard medications normally. Always consult your doctor before starting new treatments."
+    safe_fallback_technical = "Clinical data pending manual review."
+    safe_fallback_layperson = "Clinical data pending manual review."
 
     # Map the narratives
     technical = tech_note or (user_info.get("summary", {}).get("technical_narrative") if isinstance(user_info.get("summary"), dict) else None)
     if not technical or "Error" in technical or technical == "Unable to generate technical summary.":
-        technical = safe_fallback_technical + "\n\nRaw Phenotypes:\n" + "\n".join([f"{g}: {p}" for g, p in enzyme_profile.items()])
+        technical = safe_fallback_technical
         
     layperson = lay_note or (user_info.get("summary", {}).get("layperson_summary") if isinstance(user_info.get("summary"), dict) else None)
     if not layperson or "Error" in layperson or layperson == "We couldn't generate a summary at this time; please consult your doctor.":
@@ -140,26 +181,13 @@ def generate_clinical_pdf(user_info: dict, enzyme_profile: dict, drug_results: l
         textColor=colors.black,
     )
 
-    # Helper function to create a bordered section with a minimum height
-    def create_bordered_section(title, content):
-        section_data = [
-            [Paragraph(title, heading_style)],
-            [Paragraph(content, narrative_style)]
-        ]
-        # Use rowHeights to enforce a minimum height (e.g., 2 inches for the content row)
-        section_table = Table(section_data, colWidths=[6.5 * inch], rowHeights=[None, 1.5 * inch])
-        section_table.setStyle(TableStyle([
-            ('BOX', (0, 0), (-1, -1), 1.5, colors.HexColor('#1f497d')), # Clear border
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f8f9fa')), # Light background for header
-            ('PADDING', (0, 0), (-1, -1), 12),
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 10), # Padding under header
-        ]))
-        return section_table
+    # Helper function to create a bordered section
+    def create_bordered_section(title, content, border_color, bg_color):
+        return BoxedParagraph(title, content, heading_style, narrative_style, border_color, bg_color)
 
-    Elements.append(create_bordered_section("Clinical Insights (Technical Narrative)", technical))
+    Elements.append(create_bordered_section("Professional Clinical Interpretation", technical, '#1e3a8a', '#dbeafe')) # Blue
     Elements.append(Spacer(1, 0.3 * inch))
-    Elements.append(create_bordered_section("Patient Understanding (Layperson Summary)", layperson))
+    Elements.append(create_bordered_section("Patient-Friendly Genomic Overview", layperson, '#166534', '#dcfce3')) # Green
     Elements.append(Spacer(1, 0.2 * inch))
     
     # Page Break for Medication Guardrail Analysis

@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, DateTime, Float
+from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, DateTime, Float, Text
 from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy.ext.declarative import declarative_base
 import datetime
@@ -38,6 +38,10 @@ class VCFFile(Base):
     filename = Column(String)
     file_path = Column(String)
     upload_date = Column(DateTime, default=datetime.datetime.utcnow)
+    
+    # AI Summary Caching
+    tech_summary = Column(Text, nullable=True)
+    lay_summary = Column(Text, nullable=True)
 
     # Relationship to user
     owner = relationship("User", back_populates="files")

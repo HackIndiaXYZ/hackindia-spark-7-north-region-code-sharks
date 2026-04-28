@@ -20,7 +20,7 @@ import hashlib
 logger = logging.getLogger("agent3")
 
 # ✅ Clinical Models & Determinism
-PRIMARY_MODEL = "gemini-2.0-flash-lite"
+PRIMARY_MODEL = "gemini-1.5-flash"
 GEMINI_TIMEOUT = 5.0
 GEMINI_TEMPERATURE = 0.0 # Strict determinism for hospital grade
 
@@ -249,43 +249,80 @@ def _normalize_action(action: str) -> str:
         
     return "Adjust" # Default safe fallback to enforce policy
 
+# Global cache for DNA summaries to prevent 429 Rate Limit errors
+SUMMARY_CACHE = {}
+
+def generate_medical_blueprint(profile: Dict[str, str]) -> Dict[str, str]:
+    """
+    Deterministic Medical Rule Engine
+    Acts as a high-quality backup when AI is unavailable or rate-limited (e.g. 429 Error).
+    """
+    tech = ""
+    lay = ""
+    
+    # Iterate through the enzyme profile to build the blueprint
+    for gene, phenotype in profile.items():
+        if gene == "CYP2D6" and phenotype == "Poor Metabolizer":
+            tech += "Technical: rs3892097 (A;A) detected. Absence of functional CYP2D6 enzyme. "
+            lay += "Layperson: Your body cannot activate common pain medications like Codeine. "
+        elif gene == "CYP2C19" and phenotype == "Poor Metabolizer":
+            tech += "Technical: rs4244285 (A;A) detected. Profound loss of CYP2C19 activity. "
+            lay += "Layperson: Certain heart and stomach medications will not work correctly for you. "
+        elif gene == "VKORC1" and phenotype == "High Sensitivity":
+            tech += "Technical: rs9923231 (A;A) variant. Increased sensitivity to Warfarin. "
+            lay += "Layperson: You are highly sensitive to blood thinners and need a very low dose. "
+            
+    # Default fallbacks if no critical anomalies are found
+    if not tech and not lay:
+        tech = "Technical: Standard or intermediate metabolizer profile for analyzed genes. Baseline precautions apply. "
+        lay = "Layperson: Your DNA shows standard metabolic function for the tested pathways. Always consult your doctor before taking new medications. "
+
+    return {"technical_narrative": tech.strip(), "layperson_summary": lay.strip()}
+
 async def get_dna_translation_hardened(profile: Dict[str, str]) -> Dict[str, str]:
-    try:
-        api_key = os.getenv("GEMINI_API_KEY")
-        if GENAI_AVAILABLE and api_key:
-            client = genai.Client(api_key=api_key)
-            prompt = f"Analyze this genotype: {profile}. Provide a 'technical_narrative' and a 'layperson_summary'. Return as JSON."
-            response = await asyncio.to_thread(
-                client.models.generate_content,
-                model=PRIMARY_MODEL,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    temperature=GEMINI_TEMPERATURE
+    profile_key = json.dumps(profile, sort_keys=True)
+    if profile_key in SUMMARY_CACHE:
+        logger.info("Serving DNA translation from local cache.")
+        return SUMMARY_CACHE[profile_key]
+
+    api_key = os.getenv("GEMINI_API_KEY")
+    if GENAI_AVAILABLE and api_key:
+        client = genai.Client(api_key=api_key)
+        prompt = f"Analyze this genotype: {profile}. Generate a 'technical_narrative' (rsIDs, Star-Alleles, metabolic pathways) and a 'layperson_summary' (analogies, simple health advice). Do not use placeholders. Return ONLY a JSON object with these two keys."
+        
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                response = await asyncio.to_thread(
+                    client.models.generate_content,
+                    model=PRIMARY_MODEL,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        temperature=GEMINI_TEMPERATURE
+                    )
                 )
-            )
-            text = getattr(response, "text", "{}").strip()
-            if text:
-                data = json.loads(text)
-                if "technical_narrative" in data and "layperson_summary" in data:
-                    return data
-    except Exception as e:
-        logger.error(f"Failed to generate patient summary via AI: {e}. Using Clinical Fallback.")
-        pass
+                text = getattr(response, "text", "{}").strip()
+                if text:
+                    data = json.loads(text)
+                    if "technical_narrative" in data and "layperson_summary" in data:
+                        SUMMARY_CACHE[profile_key] = data
+                        return data
+                break # Success, exit retry loop
+            except Exception as e:
+                error_str = str(e)
+                logger.warning(f"Gemini API attempt {attempt + 1} failed: {error_str}")
+                if "429" in error_str and attempt < max_retries - 1:
+                    logger.info("Rate limit hit (429). Retrying in 2 seconds...")
+                    await asyncio.sleep(2)
+                else:
+                    logger.error(f"Failed to generate patient summary via AI after {attempt + 1} attempts. Using Deterministic Medical Rule Engine.")
+                    break
 
-    # HARDCODED FALLBACK (If AI fails, we manually build the summary)
-    tech = "Clinical Interpretation: "
-    lay = "Simplified Summary: "
-    
-    if profile.get("CYP2D6") == "Poor Metabolizer":
-        tech += "Patient lacks CYP2D6 function (rs3892097 homozygous). "
-        lay += "Your body cannot activate certain pain medications like Codeine. "
-    
-    if profile.get("CYP2C19") == "Poor Metabolizer":
-        tech += "CYP2C19 deficiency detected (rs4244285). "
-        lay += "Plavix/Clopidogrel will likely be ineffective for your heart health. "
-
-    return {"technical_narrative": tech, "layperson_summary": lay}
+    # DETERMINISTIC FALLBACK
+    fallback_data = generate_medical_blueprint(profile)
+    SUMMARY_CACHE[profile_key] = fallback_data
+    return fallback_data
 
 async def get_dna_translation(enzyme_profile: Dict[str, str], multi_drug_results: list = None) -> Dict[str, str]:
     """
