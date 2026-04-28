@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+@theme {
+  --color-medical-blue: #3b82f6;
+  --color-risk-red: #ef4444;
+  --color-success-green: #10b981;
+  --color-bg-dark: #0f172a; /* slate-900 */
+  --color-bg-panel: #020617; /* slate-950 */
+}
+
+body {
+  background-color: var(--color-bg-dark);
+  color: #e2e8f0; /* slate-200 */
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+/* Custom scrollbar for a techy look */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-bg-dark); 
+}
+::-webkit-scrollbar-thumb {
+  background: #334155; 
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #475569; 
+}

@@ -1,0 +1,11 @@
+pandas
+biopython
+python-dotenv
+pytest
+langgraph
+fastapi
+uvicorn
+google-generativeai
+firebase-admin
+requests
+python-multipart
