@@ -1,0 +1,30 @@
+name: genetic_guardrail_app
+description: "A new Flutter project."
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.11.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+  provider: ^6.1.2
+  dio: ^5.4.3
+  google_sign_in: ^6.2.1
+  syncfusion_flutter_gauges: ^25.1.35
+  fl_chart: ^0.67.0
+  path_provider: ^2.1.2
+  open_file: ^3.3.2
+  flutter_lucide: ^0.10.0
+  qr_flutter: ^4.1.0
+  shared_preferences: ^2.2.3
+  flutter_typeahead: ^5.0.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
